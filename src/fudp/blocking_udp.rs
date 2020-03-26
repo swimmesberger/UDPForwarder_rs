@@ -3,9 +3,9 @@ use bytes::BytesMut;
 use crate::fudp::util;
 
 pub fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Result<()> {
-    #[cfg(debug_assertions)]
-    println!("Binding blocking socket on {}", listen_address);
     let socket  = util::create_udp_socket(listen_address);
+    #[cfg(debug_assertions)]
+    println!("Binding blocking socket on {}", socket.local_addr().unwrap());
 
     let mut buf = BytesMut::with_capacity(65550);
     // init full buffer - otherwise we can't receive anything

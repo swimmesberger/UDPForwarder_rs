@@ -9,9 +9,9 @@ use crate::fudp::util;
 const QUEUE_SIZE:usize = 65550;
 
 pub fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Result<()> {
-    #[cfg(debug_assertions)]
-    println!("Binding queued blocking socket on {}", listen_address);
     let socket  = util::create_udp_socket(listen_address);
+    #[cfg(debug_assertions)]
+    println!("Binding queued blocking socket on {}", socket.local_addr().unwrap());
 
     // channel senders
     let mut senders : Vec<Sender<Vec<u8>>> = Vec::with_capacity(peers.len());

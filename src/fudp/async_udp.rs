@@ -6,9 +6,9 @@ use crate::fudp::util;
 
 #[tokio::main]
 pub async fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Result<()>  {
-    #[cfg(debug_assertions)]
-    println!("Binding async socket on {}", listen_address);
     let socket = UdpSocket::from_std(util::create_udp_socket(listen_address)).unwrap();
+    #[cfg(debug_assertions)]
+    println!("Binding async socket on {}", socket.local_addr().unwrap());
 
     let (mut receive, mut send) = socket.split();
 
