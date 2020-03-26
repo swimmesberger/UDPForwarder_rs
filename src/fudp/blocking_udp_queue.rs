@@ -53,6 +53,9 @@ pub fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Result<()>
         buf.set_len(65550);
     }
 
+    #[cfg(debug_assertions)]
+    println!("Sending to {:?}", peers);
+
     loop {
         let read_result = socket.recv(&mut buf);
         if read_result.is_err() {
