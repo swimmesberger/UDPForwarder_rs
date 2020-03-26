@@ -12,3 +12,8 @@ tokio = { version = "0.2.13", features = ["full"] }
 tokio-util = { version = "0.3.1", features = ["full"] }
 clap = "2.33.0"
 bytes = "0.5"
+crossbeam-channel = "0.4"
+net2 = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["mswsock"] }
