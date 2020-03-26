@@ -27,6 +27,7 @@ async fn main() -> Result<(), Box<dyn Error>>  {
     let (mut receive, mut send) = socket.split();
 
     let mut buf = BytesMut::with_capacity(65550);
+    // init full buffer - otherwise we can't receive anything
     unsafe {
         buf.set_len(65550);
     }
@@ -56,7 +57,9 @@ async fn main() -> Result<(), Box<dyn Error>>  {
         #[cfg(debug_assertions)]
         println!("Read data {}", read_bytes);
 
-        let mut read_buf = buf.split_to(read_bytes);
+        // get a reference to the buffer from zero to the read bytes
+        // this ensures that every peer only gets as much data as we read
+        let mut read_buf = &buf[0..read_bytes];
         //let mut writes= Vec::new();
         //let mut peer_index = 0;
         for peer in peers.iter() {
