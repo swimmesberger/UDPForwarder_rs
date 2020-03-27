@@ -689,7 +689,7 @@ dependencies = [
 
 [[package]]
 name = "udp_forwarder"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "arrayvec 0.5.1",
  "atomic-counter",

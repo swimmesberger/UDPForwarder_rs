@@ -1,62 +1,78 @@
 use std::mem;
 use std::net::UdpSocket;
 use net2::{UdpBuilder, UdpSocketExt};
-use coarsetime::{Instant, Updater};
 use num_format::{ToFormattedString, Locale};
 use std::io::Write;
+use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time;
+use atomic_counter::{AtomicCounter, RelaxedCounter};
+use std::sync::{Arc};
 
 pub const BUFFER_SIZE: usize = 65550;
 
 pub struct PacketsPerSecond {
-    packet_count: u64,
-    timed_packet_count: u32,
-    last_time: Instant,
-    locale: Locale,
-    time_check_count: i64,
-    _updater: Updater
+    period: time::Duration,
+    running: Arc<AtomicBool>,
+    th: Option<thread::JoinHandle<()>>,
+    packet_count: Arc<RelaxedCounter>,
+    locale: Locale
 }
 
 impl PacketsPerSecond {
-    pub fn with_time_check_count(time_check_count: i64) -> PacketsPerSecond {
-        return PacketsPerSecond {
-            packet_count: 0,
-            timed_packet_count: 0,
-            last_time: Instant::now(),
-            locale: Locale::de,
-            time_check_count,
-            _updater: Updater::new(500).start().unwrap()
+    /// Creates a new `Updater` with the specified update period, in milliseconds.
+    pub fn new(period_millis: u64) -> PacketsPerSecond {
+        PacketsPerSecond {
+            period: time::Duration::from_millis(period_millis),
+            running: Arc::new(AtomicBool::new(false)),
+            th: None,
+            packet_count: Arc::new(RelaxedCounter::new(0)),
+            locale: Locale::de
         }
     }
 
     #[inline]
     pub fn on_packet(&mut self) {
-        if self.time_check_count < 0 {
-            return;
-        }
-
-        self.packet_count = self.packet_count + 1;
-        if self.time_check_count == 0 {
-            self.check_time();
-            return;
-        }
-
-        self.timed_packet_count = self.timed_packet_count + 1;
-        if self.timed_packet_count > self.time_check_count as u32 {
-            self.check_time();
-            self.timed_packet_count = 0;
-        }
+        self.packet_count.inc();
     }
 
-    #[inline]
-    fn check_time(&mut self) {
-        let new_time = Instant::recent();
-        if new_time.duration_since(self.last_time).as_secs() > 1 {
-            let formatted_packet_count = self.packet_count.to_formatted_string(&self.locale);
-            print!("\r{} packets per second", formatted_packet_count);
-            std::io::stdout().flush().unwrap();
-            self.packet_count = 0;
-            self.last_time = new_time;
-        }
+    /// Spawns a background task to update packets periodically
+    pub fn start(&mut self) -> Result<(), io::Error> {
+        let period = self.period;
+
+        let packet_count = self.packet_count.clone();
+        let running = self.running.clone();
+        running.store(true, Ordering::Relaxed);
+
+        let locale = self.locale.clone();
+
+        let th: thread::JoinHandle<()> = thread::Builder::new()
+            .name("coarsetime".to_string())
+            .spawn(move || {
+                while running.load(Ordering::Relaxed) {
+                    thread::sleep(period);
+                    let packet_count_val = packet_count.reset();
+                    let formatted_packet_count = packet_count_val.to_formatted_string(&locale);
+                    print!("\r{} packets per second", formatted_packet_count);
+                    std::io::stdout().flush().unwrap();
+                }
+            })?;
+        self.th = Some(th);
+        Ok(())
+    }
+
+    /// Stops the periodic updates
+    #[allow(dead_code)]
+    pub fn stop(mut self) -> Result<(), io::Error> {
+        self.running.store(false, Ordering::Relaxed);
+        self.th
+            .take()
+            .expect("updater is not running")
+            .join()
+            .map_err(|_| {
+                io::Error::new(io::ErrorKind::Other, "failed to properly stop the updater")
+            })
     }
 }
 

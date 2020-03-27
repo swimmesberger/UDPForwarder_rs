@@ -22,7 +22,6 @@ pub async fn run(listen_address: &str, peers: &Vec<SocketAddr>, pks: &mut Packet
         buf.set_len(util::BUFFER_SIZE);
     }
 
-    #[cfg(debug_assertions)]
     println!("Sending to {:?}", peers);
 
     loop {

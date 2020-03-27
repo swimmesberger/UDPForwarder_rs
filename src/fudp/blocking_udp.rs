@@ -13,7 +13,6 @@ pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, pks: &mut PacketsPerSe
         buf.set_len(util::BUFFER_SIZE);
     }
 
-    #[cfg(debug_assertions)]
     println!("Sending to {:?}", peers);
 
     loop {

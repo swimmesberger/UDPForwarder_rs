@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::thread;
+use std::{thread};
 use bus::Bus;
 use crate::fudp::util;
 use crate::fudp::util::PacketsPerSecond;
@@ -10,6 +10,7 @@ const QUEUE_SIZE: usize = 65550;
 
 pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, pks: &mut PacketsPerSecond) -> std::io::Result<()> {
     let socket = util::create_udp_socket(listen_address);
+    socket.set_nonblocking(false).unwrap();
 
     println!("Binding queued blocking read socket on {}", socket.local_addr().unwrap());
 
@@ -52,11 +53,10 @@ pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, pks: &mut PacketsPerSe
     // init full buffer - otherwise we can't receive anything,
     let mut buf;
     {
-        let buf_backed : Vec<u8> = vec![0; util::BUFFER_SIZE];
+        let buf_backed: Vec<u8> = vec![0; util::BUFFER_SIZE];
         buf = BytesMut::from(buf_backed.as_slice());
     }
 
-    #[cfg(debug_assertions)]
     println!("Sending to {:?}", peers);
 
     loop {
@@ -68,7 +68,7 @@ pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, pks: &mut PacketsPerSe
         }
 
         #[allow(unused_variables)]
-            let (read_bytes, src) = read_result.unwrap();
+        let (read_bytes, src) = read_result.unwrap();
         if read_bytes <= 0 {
             #[cfg(debug_assertions)]
             println!("No data read");
@@ -79,7 +79,7 @@ pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, pks: &mut PacketsPerSe
         println!("Read data {} from {}", read_bytes, src);
 
         // Redeclare `buf` as slice of the received data
-        let read_buf : Bytes = BytesMut::from(&buf[..read_bytes]).freeze();
+        let read_buf: Bytes = BytesMut::from(&buf[..read_bytes]).freeze();
         bus.broadcast(read_buf);
         pks.on_packet();
     }
