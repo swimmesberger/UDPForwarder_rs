@@ -3,9 +3,10 @@ use tokio::net::UdpSocket;
 use bytes::{BytesMut};
 use std::net::SocketAddr;
 use crate::fudp::util;
+use crate::fudp::util::PacketsPerSecond;
 
 #[tokio::main]
-pub async fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Result<()>  {
+pub async fn run(listen_address: &str, peers: &Vec<SocketAddr>, pks: &mut PacketsPerSecond) -> std::io::Result<()>  {
     if peers.is_empty() {
         return Ok(())
     }
@@ -24,7 +25,6 @@ pub async fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Resu
     #[cfg(debug_assertions)]
     println!("Sending to {:?}", peers);
 
-    let mut packets_per_second = util::PacketsPerSecond::new();
     loop {
         #[cfg(debug_assertions)]
         println!();
@@ -71,6 +71,6 @@ pub async fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Resu
             }
         }
 
-        packets_per_second.on_packet();
+        pks.on_packet();
     }
 }

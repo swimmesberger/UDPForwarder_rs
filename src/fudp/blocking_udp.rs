@@ -1,8 +1,9 @@
 use std::net::{SocketAddr};
 use bytes::BytesMut;
 use crate::fudp::util;
+use crate::fudp::util::PacketsPerSecond;
 
-pub fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Result<()> {
+pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, pks: &mut PacketsPerSecond) -> std::io::Result<()> {
     let socket  = util::create_udp_socket(listen_address);
     println!("Binding blocking socket on {}", socket.local_addr().unwrap());
 
@@ -15,7 +16,6 @@ pub fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Result<()>
     #[cfg(debug_assertions)]
     println!("Sending to {:?}", peers);
 
-    let mut packets_per_second = util::PacketsPerSecond::new();
     loop {
         #[cfg(debug_assertions)]
         println!();
@@ -61,6 +61,6 @@ pub fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Result<()>
             }
         }
 
-        packets_per_second.on_packet();
+        pks.on_packet();
     }
 }

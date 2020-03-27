@@ -1,6 +1,6 @@
 [package]
 name = "udp_forwarder"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Simon Wimmesberger <simon.wimmesberger@zoetis.com>"]
 edition = "2018"
 
@@ -19,7 +19,9 @@ num-format = { version = "0.4.0" }
 atomic-counter = "1.0.1"
 rand = "0.7.3"
 rpmalloc = "0.1.0"
-mimalloc = { version = "0.1.18", default-features = false }
+#mimalloc = { version = "0.1.18", default-features = false }
+bus = "2.2.3"
+coarsetime = "0.1.12"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["mswsock"] }

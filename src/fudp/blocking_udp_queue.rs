@@ -1,48 +1,37 @@
 use std::net::SocketAddr;
 use bytes::{BytesMut, Bytes};
-use crossbeam_channel::Sender;
-use crossbeam_channel::Receiver;
 use std::thread;
+use bus::Bus;
 use crate::fudp::util;
+use crate::fudp::util::PacketsPerSecond;
 
 // number of packets in queue until the reader is blocked
 const QUEUE_SIZE: usize = 65550;
 
-pub fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Result<()> {
+pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, pks: &mut PacketsPerSecond) -> std::io::Result<()> {
     let socket = util::create_udp_socket(listen_address);
-    println!("Binding queued blocking socket on {}", socket.local_addr().unwrap());
 
-    let is_single_target = peers.len() == 1;
-    if is_single_target {
-        let peer = peers.get(0).unwrap();
-        socket.connect(peer).unwrap();
-    }
+    println!("Binding queued blocking read socket on {}", socket.local_addr().unwrap());
 
     // channel senders
-    let mut senders: Vec<Sender<Bytes>> = Vec::with_capacity(peers.len());
+    let mut bus : Bus<Bytes> = Bus::new(QUEUE_SIZE);
     let mut children = Vec::with_capacity(peers.len());
     for peer in peers.iter() {
-        let peer_socket = socket.try_clone()?;
         let peer_copy = peer.clone();
-
-        // copy receiving channel end
-        let (tx, rx): (Sender<Bytes>, Receiver<Bytes>) = crossbeam_channel::bounded(QUEUE_SIZE);
-        senders.push(tx);
-
+        let mut peer_rx = bus.add_rx();
         // Each thread will send its id via the channel
         let child = thread::spawn(move || {
+            let peer_address = "127.0.0.1:0";
+            let peer_socket = util::create_udp_socket(peer_address);
+            peer_socket.connect(peer_copy).unwrap();
+            println!("Binding queued blocking send socket on {}", peer_socket.local_addr().unwrap());
             loop {
-                let read_buf_vec = rx.recv().unwrap();
+                let read_buf_vec = peer_rx.recv().unwrap();
                 let read_buf: &[u8] = read_buf_vec.as_ref();
                 #[cfg(debug_assertions)]
                 println!("Sending data {} to {}", read_buf.len(), peer_copy);
 
-                let write_result;
-                if is_single_target {
-                    write_result = peer_socket.send(read_buf);
-                } else {
-                    write_result = peer_socket.send_to(read_buf, peer_copy);
-                }
+                let write_result = peer_socket.send(read_buf);
                 if write_result.is_err() {
                     #[cfg(debug_assertions)]
                     println!("Error on send {}", peer_copy);
@@ -63,13 +52,11 @@ pub fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Result<()>
     let mut buf = BytesMut::with_capacity(util::BUFFER_SIZE);
     // init full buffer - otherwise we can't receive anything
     unsafe {
-        buf.set_len(65550);
+        buf.set_len(util::BUFFER_SIZE);
     }
 
     #[cfg(debug_assertions)]
     println!("Sending to {:?}", peers);
-
-    let mut packets_per_second = util::PacketsPerSecond::new();
 
     loop {
         let read_result = socket.recv_from(&mut buf);
@@ -91,10 +78,7 @@ pub fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Result<()>
 
         // Redeclare `buf` as slice of the received data
         let read_buf = BytesMut::from(&buf[..read_bytes]).freeze();
-        for (_i, sender) in senders.iter().enumerate() {
-            // each channel get's is own copied buffer instance
-            sender.send(read_buf.clone()).unwrap();
-        }
-        packets_per_second.on_packet();
+        bus.broadcast(read_buf);
+        pks.on_packet();
     }
 }

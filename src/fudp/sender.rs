@@ -2,8 +2,9 @@ use std::net::SocketAddr;
 use crate::fudp::util;
 use bytes::{BytesMut, BufMut};
 use rand::Rng;
+use crate::fudp::util::PacketsPerSecond;
 
-pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, packet_size: usize) -> std::io::Result<()> {
+pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, packet_size: usize, pks: &mut PacketsPerSecond) -> std::io::Result<()> {
     if peers.is_empty() {
         return Ok(())
     }
@@ -21,7 +22,6 @@ pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, packet_size: usize) ->
 
     println!();
 
-    let mut packets_per_second = util::PacketsPerSecond::new();
     loop {
         let random_bytes: Vec<u8> = (0..packet_size).map(|_| { rng.gen::<u8>() }).collect();
         unsafe {
@@ -49,6 +49,6 @@ pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, packet_size: usize) ->
             }
         }
 
-        packets_per_second.on_packet();
+        pks.on_packet();
     }
 }

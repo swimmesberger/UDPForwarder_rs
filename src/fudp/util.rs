@@ -1,49 +1,62 @@
 use std::mem;
 use std::net::UdpSocket;
 use net2::{UdpBuilder, UdpSocketExt};
-use atomic_counter::{RelaxedCounter, AtomicCounter};
-use std::time::Instant;
-use std::sync::{Mutex, Arc};
+use coarsetime::{Instant, Updater};
 use num_format::{ToFormattedString, Locale};
-use std::ops::Sub;
 use std::io::Write;
 
 pub const BUFFER_SIZE: usize = 65550;
-const TIME_PACKET_CHECK_COUNT: usize = 50_000;
 
-pub(crate) struct PacketsPerSecond {
-    packet_count: RelaxedCounter,
-    timed_packet_count: RelaxedCounter,
-    last_time: Arc<Mutex<Instant>>,
+pub struct PacketsPerSecond {
+    packet_count: u64,
+    timed_packet_count: u32,
+    last_time: Instant,
     locale: Locale,
+    time_check_count: i64,
+    _updater: Updater
 }
 
 impl PacketsPerSecond {
-    pub fn new() -> PacketsPerSecond {
-        PacketsPerSecond {
-            packet_count: RelaxedCounter::new(0),
-            timed_packet_count: RelaxedCounter::new(0),
-            last_time: Arc::new(Mutex::new(Instant::now())),
+    pub fn with_time_check_count(time_check_count: i64) -> PacketsPerSecond {
+        return PacketsPerSecond {
+            packet_count: 0,
+            timed_packet_count: 0,
+            last_time: Instant::now(),
             locale: Locale::de,
+            time_check_count,
+            _updater: Updater::new(500).start().unwrap()
         }
     }
 
     pub fn on_packet(&mut self) {
-        let prev_packet_count = self.packet_count.inc();
-        let prev_time_packet_count = self.timed_packet_count.inc();
+        if self.time_check_count < 0 {
+            return;
+        }
 
-        if prev_time_packet_count > TIME_PACKET_CHECK_COUNT {
-            let mut last_time_mut = self.last_time.lock().unwrap();
-            let last_time = last_time_mut.to_owned();
+        let packet_count = self.packet_count + 1;
+        self.packet_count = packet_count;
 
-            let new_time = Instant::now();
-            if new_time.sub(last_time).as_secs() > 1 {
-                print!("\r{} packets per second", prev_packet_count.to_formatted_string(&self.locale));
-                std::io::stdout().flush().unwrap();
-                self.packet_count.reset();
-                *last_time_mut = new_time;
-            }
-            self.timed_packet_count.reset();
+        if self.time_check_count == 0 {
+            self.check_time(packet_count);
+            return;
+        }
+
+        let time_packet_count = self.timed_packet_count + 1;
+        self.timed_packet_count = time_packet_count;
+        if time_packet_count > self.time_check_count as u32 {
+            self.check_time(packet_count);
+            self.timed_packet_count = 0;
+        }
+    }
+
+    fn check_time(&mut self, packet_count: u64) {
+        let last_time = self.last_time;
+        let new_time = Instant::recent();
+        if new_time.duration_since(last_time).as_secs() > 1 {
+            print!("\r{} packets per second", packet_count.to_formatted_string(&self.locale));
+            std::io::stdout().flush().unwrap();
+            self.packet_count = 0;
+            self.last_time = new_time;
         }
     }
 }
