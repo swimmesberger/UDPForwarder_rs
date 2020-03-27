@@ -1,51 +1,54 @@
 use std::net::SocketAddr;
 use crate::fudp::util;
-use bytes::BytesMut;
-use std::time::Instant;
-use num_format::{Locale, ToFormattedString};
+use bytes::{BytesMut, BufMut};
+use rand::Rng;
 
-const TIME_PACKET_CHECK_COUNT:usize = 50_000;
-
-pub fn run(listen_address: &str, peer: SocketAddr) -> std::io::Result<()> {
+pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, packet_size: usize) -> std::io::Result<()> {
+    if peers.is_empty() {
+        return Ok(())
+    }
     let socket  = util::create_udp_socket(listen_address);
-    socket.connect(peer).unwrap();
-
-    #[cfg(debug_assertions)]
     println!("Binding sending socket on {}", socket.local_addr().unwrap());
 
-    let mut buf = BytesMut::with_capacity(300);
-    // init buffer with empty bytes
-    unsafe {
-        buf.set_len(300);
+    let is_single_target = peers.len() == 1;
+    if is_single_target {
+        let peer = peers.get(0).unwrap();
+        socket.connect(peer).unwrap();
     }
+
+    let mut buf = BytesMut::with_capacity(packet_size);
+    let mut rng = rand::thread_rng();
 
     println!();
 
-    let locale = Locale::de;
-    let mut now = Instant::now();
-    let mut packet_count = 0;
-    // we try to check the time only after some packets
-    let mut time_packet_count = 0;
+    let mut packets_per_second = util::PacketsPerSecond::new();
     loop {
-        let write_result = socket.send(&buf);
-        if write_result.is_err() {
-            #[cfg(debug_assertions)]
-            println!("Error on send {}", peer);
-            continue;
+        let random_bytes: Vec<u8> = (0..packet_size).map(|_| { rng.gen::<u8>() }).collect();
+        unsafe {
+            buf.set_len(0);
         }
-        write_result.unwrap();
+        buf.put_slice(&random_bytes);
 
-        packet_count = packet_count+1;
-        time_packet_count = time_packet_count+1;
-
-        if time_packet_count > TIME_PACKET_CHECK_COUNT {
-            let new_time = Instant::now();
-            if (new_time-now).as_secs() > 1 {
-                println!("{} packets per second", packet_count.to_formatted_string(&locale));
-                packet_count = 0;
-                now = new_time;
+        if is_single_target {
+            let write_result = socket.send(&buf);
+            if write_result.is_err() {
+                #[cfg(debug_assertions)]
+                println!("Error on send");
+                continue;
             }
-            time_packet_count = 0;
+            write_result.unwrap();
+        } else {
+            for peer in peers.iter() {
+                let write_result = socket.send_to(&buf, peer);
+                if write_result.is_err() {
+                    #[cfg(debug_assertions)]
+                    println!("Error on send {}", peer);
+                    continue;
+                }
+                write_result.unwrap();
+            }
         }
+
+        packets_per_second.on_packet();
     }
 }

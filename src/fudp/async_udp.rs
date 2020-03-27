@@ -6,20 +6,25 @@ use crate::fudp::util;
 
 #[tokio::main]
 pub async fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Result<()>  {
+    if peers.is_empty() {
+        return Ok(())
+    }
+
     let socket = UdpSocket::from_std(util::create_udp_socket(listen_address)).unwrap();
-    #[cfg(debug_assertions)]
     println!("Binding async socket on {}", socket.local_addr().unwrap());
 
     let (mut receive, mut send) = socket.split();
 
-    let mut buf = BytesMut::with_capacity(65550);
+    let mut buf = BytesMut::with_capacity(util::BUFFER_SIZE);
     // init full buffer - otherwise we can't receive anything
     unsafe {
-        buf.set_len(65550);
+        buf.set_len(util::BUFFER_SIZE);
     }
 
     #[cfg(debug_assertions)]
     println!("Sending to {:?}", peers);
+
+    let mut packets_per_second = util::PacketsPerSecond::new();
     loop {
         #[cfg(debug_assertions)]
         println!();
@@ -58,9 +63,14 @@ pub async fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Resu
                 println!("Error on send {}", peer);
                 continue;
             }
-            let written_bytes = written_bytes_result.unwrap();
-            #[cfg(debug_assertions)]
-            println!("Sent data {} to {}", written_bytes, peer);
+            if cfg!(debug_assertions) {
+                let written_bytes = written_bytes_result.unwrap();
+                println!("Sent data {} to {}", written_bytes, peer);
+            } else{
+                written_bytes_result.unwrap();
+            }
         }
+
+        packets_per_second.on_packet();
     }
 }

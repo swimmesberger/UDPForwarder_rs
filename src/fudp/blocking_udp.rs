@@ -4,17 +4,18 @@ use crate::fudp::util;
 
 pub fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Result<()> {
     let socket  = util::create_udp_socket(listen_address);
-    #[cfg(debug_assertions)]
     println!("Binding blocking socket on {}", socket.local_addr().unwrap());
 
-    let mut buf = BytesMut::with_capacity(65550);
+    let mut buf = BytesMut::with_capacity(util::BUFFER_SIZE);
     // init full buffer - otherwise we can't receive anything
     unsafe {
-        buf.set_len(65550);
+        buf.set_len(util::BUFFER_SIZE);
     }
 
     #[cfg(debug_assertions)]
     println!("Sending to {:?}", peers);
+
+    let mut packets_per_second = util::PacketsPerSecond::new();
     loop {
         #[cfg(debug_assertions)]
         println!();
@@ -52,9 +53,14 @@ pub fn run(listen_address: &str, peers: &Vec<SocketAddr>) -> std::io::Result<()>
                 continue;
             }
 
-            let written_bytes = write_result.unwrap();
-            #[cfg(debug_assertions)]
-            println!("Sent data {} to {}", written_bytes, peer);
+            if cfg!(debug_assertions) {
+                let written_bytes = write_result.unwrap();
+                println!("Sent data {} to {}", written_bytes, peer);
+            } else{
+                write_result.unwrap();
+            }
         }
+
+        packets_per_second.on_packet();
     }
 }
