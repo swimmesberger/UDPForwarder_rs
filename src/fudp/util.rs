@@ -28,32 +28,31 @@ impl PacketsPerSecond {
         }
     }
 
+    #[inline]
     pub fn on_packet(&mut self) {
         if self.time_check_count < 0 {
             return;
         }
 
-        let packet_count = self.packet_count + 1;
-        self.packet_count = packet_count;
-
+        self.packet_count = self.packet_count + 1;
         if self.time_check_count == 0 {
-            self.check_time(packet_count);
+            self.check_time();
             return;
         }
 
-        let time_packet_count = self.timed_packet_count + 1;
-        self.timed_packet_count = time_packet_count;
-        if time_packet_count > self.time_check_count as u32 {
-            self.check_time(packet_count);
+        self.timed_packet_count = self.timed_packet_count + 1;
+        if self.timed_packet_count > self.time_check_count as u32 {
+            self.check_time();
             self.timed_packet_count = 0;
         }
     }
 
-    fn check_time(&mut self, packet_count: u64) {
-        let last_time = self.last_time;
+    #[inline]
+    fn check_time(&mut self) {
         let new_time = Instant::recent();
-        if new_time.duration_since(last_time).as_secs() > 1 {
-            print!("\r{} packets per second", packet_count.to_formatted_string(&self.locale));
+        if new_time.duration_since(self.last_time).as_secs() > 1 {
+            let formatted_packet_count = self.packet_count.to_formatted_string(&self.locale);
+            print!("\r{} packets per second", formatted_packet_count);
             std::io::stdout().flush().unwrap();
             self.packet_count = 0;
             self.last_time = new_time;

@@ -22,6 +22,7 @@ rpmalloc = "0.1.0"
 #mimalloc = { version = "0.1.18", default-features = false }
 bus = "2.2.3"
 coarsetime = "0.1.12"
+arrayvec = "0.5.1"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["mswsock"] }

@@ -1,9 +1,9 @@
 use std::net::SocketAddr;
-use bytes::{BytesMut, Bytes};
 use std::thread;
 use bus::Bus;
 use crate::fudp::util;
 use crate::fudp::util::PacketsPerSecond;
+use bytes::{Bytes, BytesMut};
 
 // number of packets in queue until the reader is blocked
 const QUEUE_SIZE: usize = 65550;
@@ -14,7 +14,7 @@ pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, pks: &mut PacketsPerSe
     println!("Binding queued blocking read socket on {}", socket.local_addr().unwrap());
 
     // channel senders
-    let mut bus : Bus<Bytes> = Bus::new(QUEUE_SIZE);
+    let mut bus: Bus<Bytes> = Bus::new(QUEUE_SIZE);
     let mut children = Vec::with_capacity(peers.len());
     for peer in peers.iter() {
         let peer_copy = peer.clone();
@@ -49,24 +49,26 @@ pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, pks: &mut PacketsPerSe
         children.push(child);
     }
 
-    let mut buf = BytesMut::with_capacity(util::BUFFER_SIZE);
-    // init full buffer - otherwise we can't receive anything
-    unsafe {
-        buf.set_len(util::BUFFER_SIZE);
+    // init full buffer - otherwise we can't receive anything,
+    let mut buf;
+    {
+        let buf_backed : Vec<u8> = vec![0; util::BUFFER_SIZE];
+        buf = BytesMut::from(buf_backed.as_slice());
     }
 
     #[cfg(debug_assertions)]
     println!("Sending to {:?}", peers);
 
     loop {
-        let read_result = socket.recv_from(&mut buf);
+        let read_result = socket.recv_from(buf.as_mut());
         if read_result.is_err() {
             #[cfg(debug_assertions)]
             println!("Error on read {}", read_result.unwrap_err());
             continue;
         }
 
-        let (read_bytes, _src) = read_result.unwrap();
+        #[allow(unused_variables)]
+            let (read_bytes, src) = read_result.unwrap();
         if read_bytes <= 0 {
             #[cfg(debug_assertions)]
             println!("No data read");
@@ -74,10 +76,10 @@ pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, pks: &mut PacketsPerSe
         }
 
         #[cfg(debug_assertions)]
-        println!("Read data {}", read_bytes);
+        println!("Read data {} from {}", read_bytes, src);
 
         // Redeclare `buf` as slice of the received data
-        let read_buf = BytesMut::from(&buf[..read_bytes]).freeze();
+        let read_buf : Bytes = BytesMut::from(&buf[..read_bytes]).freeze();
         bus.broadcast(read_buf);
         pks.on_packet();
     }
