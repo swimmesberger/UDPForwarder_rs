@@ -1,9 +1,12 @@
-use std::net::{SocketAddr};
 use bytes::BytesMut;
 use crate::fudp::util;
-use crate::fudp::util::PacketsPerSecond;
+use crate::fudp::util::{ForwardingConfiguration};
 
-pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, pks: &mut PacketsPerSecond) -> std::io::Result<()> {
+pub fn run(config: &mut ForwardingConfiguration) -> std::io::Result<()> {
+    let peers = config.peers;
+    let listen_address = config.listen_address;
+    let pks = &mut config.pks;
+
     let socket  = util::create_udp_socket(listen_address);
     println!("Binding blocking socket on {}", socket.local_addr().unwrap());
 

@@ -1,14 +1,17 @@
-use std::net::SocketAddr;
 use std::{thread};
 use bus::Bus;
 use crate::fudp::util;
-use crate::fudp::util::PacketsPerSecond;
+use crate::fudp::util::{ForwardingConfiguration};
 use bytes::{Bytes, BytesMut};
 
 // number of packets in queue until the reader is blocked
 const QUEUE_SIZE: usize = 65550;
 
-pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, pks: &mut PacketsPerSecond) -> std::io::Result<()> {
+pub fn run(config: &mut ForwardingConfiguration) -> std::io::Result<()> {
+    let peers = config.peers;
+    let listen_address = config.listen_address;
+    let pks = &mut config.pks;
+
     let socket = util::create_udp_socket(listen_address);
     socket.set_nonblocking(false).unwrap();
 

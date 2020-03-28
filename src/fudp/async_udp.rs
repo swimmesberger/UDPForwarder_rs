@@ -1,12 +1,14 @@
 use tokio;
 use tokio::net::UdpSocket;
 use bytes::{BytesMut};
-use std::net::SocketAddr;
 use crate::fudp::util;
-use crate::fudp::util::PacketsPerSecond;
+use crate::fudp::util::{ForwardingConfiguration};
 
 #[tokio::main]
-pub async fn run(listen_address: &str, peers: &Vec<SocketAddr>, pks: &mut PacketsPerSecond) -> std::io::Result<()>  {
+pub async fn run(config: &mut ForwardingConfiguration) -> std::io::Result<()>  {
+    let peers = config.peers;
+    let listen_address = config.listen_address;
+    let pks = &mut config.pks;
     if peers.is_empty() {
         return Ok(())
     }

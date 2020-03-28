@@ -1,10 +1,14 @@
-use std::net::SocketAddr;
 use crate::fudp::util;
 use bytes::{BytesMut, BufMut};
 use rand::Rng;
-use crate::fudp::util::PacketsPerSecond;
+use crate::fudp::util::{ForwardingConfiguration};
 
-pub fn run(listen_address: &str, peers: &Vec<SocketAddr>, packet_size: usize, pks: &mut PacketsPerSecond) -> std::io::Result<()> {
+pub fn run(config: &mut ForwardingConfiguration) -> std::io::Result<()> {
+    let peers = config.peers;
+    let listen_address = config.listen_address;
+    let packet_size = config.send_packet_size;
+    let pks = &mut config.pks;
+
     if peers.is_empty() {
         return Ok(())
     }

@@ -1,5 +1,5 @@
 use std::mem;
-use std::net::UdpSocket;
+use std::net::{UdpSocket, SocketAddr};
 use net2::{UdpBuilder, UdpSocketExt};
 use num_format::{ToFormattedString, Locale};
 use std::io::Write;
@@ -11,6 +11,24 @@ use atomic_counter::{AtomicCounter, RelaxedCounter};
 use std::sync::{Arc};
 
 pub const BUFFER_SIZE: usize = 65550;
+
+pub struct ForwardingConfiguration<'a> {
+    pub(crate) listen_address: &'a str,
+    pub(crate) peers: &'a Vec<SocketAddr>,
+    pub(crate) pks: &'a mut PacketsPerSecond,
+    pub(crate) send_packet_size: usize
+}
+
+impl<'a> ForwardingConfiguration<'a> {
+    pub fn new(listen_address: &'a str, peers: &'a Vec<SocketAddr>, pks: &'a mut PacketsPerSecond, send_packet_size: usize) -> ForwardingConfiguration<'a> {
+        ForwardingConfiguration {
+            listen_address,
+            peers,
+            pks,
+            send_packet_size
+        }
+    }
+}
 
 pub struct PacketsPerSecond {
     period: time::Duration,

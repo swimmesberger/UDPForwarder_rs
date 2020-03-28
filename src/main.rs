@@ -1,5 +1,6 @@
 use clap::{App, Arg};
 use std::net::SocketAddr;
+use crate::fudp::util::ForwardingConfiguration;
 
 mod fudp;
 
@@ -40,15 +41,17 @@ fn main() -> std::io::Result<()> {
     let pps = &mut fudp::util::PacketsPerSecond::new(1000);
     pps.start().unwrap();
 
+    let mut config = ForwardingConfiguration::new(listen_address, &peers, pps, send_packet_size);
+
     let result;
     if is_sending {
-        result = fudp::sender::run(listen_address, &peers, send_packet_size, pps);
+        result = fudp::sender::run(&mut config);
     } else if is_async {
-        result = fudp::async_udp::run(listen_address, &peers, pps);
+        result = fudp::async_udp::run(&mut config);
     } else if is_no_queue {
-        result = fudp::blocking_udp::run(listen_address, &peers, pps);
+        result = fudp::blocking_udp::run(&mut config);
     } else {
-        result = fudp::blocking_udp_queue::run(listen_address, &peers, pps);
+        result = fudp::blocking_udp_queue::run(&mut config);
     }
     return result;
 }
