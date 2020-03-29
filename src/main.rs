@@ -30,9 +30,8 @@ fn main() -> std::io::Result<()> {
     let mut listen_address = matches.value_of("input-address").unwrap();
     let peers: Vec<SocketAddr> = matches.values_of("output-address").unwrap().map(|address| address.parse().unwrap()).collect();
     let is_async = matches.values_of("async").is_some();
-    let is_queue = matches.values_of("queue").is_some();
-    // default mode
-    let mut _is_block = matches.values_of("block").is_some();
+    let mut is_queue = matches.values_of("queue").is_some();
+    let mut is_block = matches.values_of("block").is_some();
     let mut is_sending = matches.values_of("sending").is_some();
     let send_packet_size: usize = matches.value_of("packet-size").unwrap().parse().unwrap();
     let no_listen_address = listen_address.is_empty();
@@ -44,6 +43,14 @@ fn main() -> std::io::Result<()> {
         is_sending = true;
     }
 
+    if !is_sending && !is_async && !is_queue && !is_block {
+        if peers.len() <= 1 {
+            is_block = true;
+        } else {
+            is_queue = true;
+        }
+    }
+
     if send_threads_s.is_empty() {
         if is_async {
             send_threads_s = "1";
@@ -51,7 +58,7 @@ fn main() -> std::io::Result<()> {
             send_threads_s = "2";
         } else if is_sending {
             send_threads_s = "2";
-        } else {
+        } else if is_block {
             send_threads_s = "2";
         }
     }
@@ -63,7 +70,7 @@ fn main() -> std::io::Result<()> {
             receive_threads_s = "1";
         } else if is_sending {
             receive_threads_s = "0";
-        } else {
+        } else if is_block {
             receive_threads_s = "0";
         }
     }
@@ -84,8 +91,11 @@ fn main() -> std::io::Result<()> {
         result = fudp::async_udp::run(&config);
     } else if is_queue {
         result = fudp::blocking_udp_queue::run(&config);
-    } else {
+    } else if is_block {
         result = fudp::blocking_udp::run(&config);
+    } else {
+        println!("No mode selected");
+        result = Ok(());
     }
     return result;
 }
