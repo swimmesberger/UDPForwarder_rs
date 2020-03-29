@@ -1,6 +1,6 @@
 use clap::{App, Arg};
 use std::net::SocketAddr;
-use crate::fudp::util::ForwardingConfiguration;
+use crate::fudp::util::{ForwardingConfiguration, SocketConfiguration};
 
 mod fudp;
 
@@ -25,6 +25,8 @@ fn main() -> std::io::Result<()> {
         .arg(Arg::with_name("packet-size").short("p").required(false).takes_value(true).default_value("300").help("Set's the send packet size"))
         .arg(Arg::with_name("send-threads").short("t").required(false).takes_value(true).default_value("").help("The number of threads used for sending"))
         .arg(Arg::with_name("receive-threads").short("r").required(false).takes_value(true).default_value("").help("The number of threads used for receiving"))
+        .arg(Arg::with_name("recv-buffer").short("v").required(false).takes_value(true).default_value("0").help("The number of bytes for the socket receive buffer."))
+        .arg(Arg::with_name("send-buffer").short("n").required(false).takes_value(true).default_value("0").help("The number of bytes for the socket receive buffer."))
         .get_matches();
 
     let mut listen_address = matches.value_of("input-address").unwrap();
@@ -37,6 +39,8 @@ fn main() -> std::io::Result<()> {
     let no_listen_address = listen_address.is_empty();
     let mut send_threads_s = matches.value_of("send-threads").unwrap();
     let mut receive_threads_s = matches.value_of("receive-threads").unwrap();
+    let so_receive_buffer: usize = matches.value_of("recv-buffer").unwrap().parse().unwrap();
+    let so_send_buffer: usize = matches.value_of("send-buffer").unwrap().parse().unwrap();
 
     if no_listen_address {
         listen_address = DEFAULT_LISTEN_ADDRESS;
@@ -82,7 +86,9 @@ fn main() -> std::io::Result<()> {
     let pps = &mut fudp::util::PacketsPerSecond::new(1000);
     pps.start().unwrap();
 
-    let config = ForwardingConfiguration::new(listen_address, &peers, pps, send_packet_size, send_threads, receive_threads);
+    let socket_config = SocketConfiguration::new(listen_address, so_receive_buffer, so_send_buffer);
+    let config = ForwardingConfiguration::new(&socket_config, &peers, pps, send_packet_size, send_threads,
+                                              receive_threads);
 
     let result;
     if is_sending {

@@ -1,7 +1,7 @@
 use std::{thread};
 use bus::{Bus, BusReader};
 use crate::fudp::util;
-use crate::fudp::util::{ForwardingConfiguration, ForwardingPacket, PacketsPerSecond};
+use crate::fudp::util::{ForwardingConfiguration, ForwardingPacket, PacketsPerSecond, SocketConfigurationParameter};
 use bytes::{Bytes, BytesMut};
 use std::thread::JoinHandle;
 use std::net::{SocketAddr, UdpSocket};
@@ -9,11 +9,11 @@ use std::sync::{Mutex, Arc};
 
 pub fn run(config: &ForwardingConfiguration) -> std::io::Result<()> {
     let peers = config.peers;
-    let listen_address = config.listen_address;
     let pks = &config.pks;
     let peers_count = peers.len();
     let send_thread_count = config.send_thread_count;
     let recv_thread_count = config.receive_thread_count;
+    let socket_params = config.socket.parameters;
 
     // channel senders
     let mut bus: Bus<ForwardingPacket> = Bus::new(util::QUEUE_SIZE);
@@ -22,12 +22,12 @@ pub fn run(config: &ForwardingConfiguration) -> std::io::Result<()> {
         let peer_copy = peer.clone();
         for _x in 0..send_thread_count {
             let peer_rx = bus.add_rx();
-            let child = spawn_send_worker(idx, peer_copy, peer_rx);
+            let child = spawn_send_worker(idx, peer_copy, peer_rx, socket_params);
             children.push(child);
         }
     }
 
-    let socket = util::create_udp_socket(listen_address);
+    let socket = util::create_udp_socket_with_config(config.socket);
     println!("Binding queued blocking read socket on {}", socket.local_addr().unwrap());
 
     if recv_thread_count <= 1 {
@@ -72,7 +72,7 @@ fn read_worker(socket: &UdpSocket, peers: &Vec<SocketAddr>, bus_locked: Option<&
         }
 
         #[allow(unused_variables)]
-            let (read_bytes, src) = read_result.unwrap();
+        let (read_bytes, src) = read_result.unwrap();
         if read_bytes <= 0 {
             #[cfg(debug_assertions)]
             println!("No data read");
@@ -94,17 +94,17 @@ fn read_worker(socket: &UdpSocket, peers: &Vec<SocketAddr>, bus_locked: Option<&
     }
 }
 
-fn spawn_send_worker(idx: usize, dst:  SocketAddr, mut rx: BusReader<ForwardingPacket>) -> JoinHandle<()> {
+fn spawn_send_worker(idx: usize, dst:  SocketAddr, mut rx: BusReader<ForwardingPacket>, config: SocketConfigurationParameter) -> JoinHandle<()> {
     // Each thread will send its id via the channel
     let child = thread::Builder::new().name(format!("Send-Worker-{}", idx)).spawn(move || {
-        send_worker(idx, dst, &mut rx);
+        send_worker(idx, dst, &mut rx, config);
     }).unwrap();
     return child;
 }
 
 #[inline]
-fn send_worker(idx: usize, dst: SocketAddr, rx: &mut BusReader<ForwardingPacket>) {
-    let peer_socket = util::create_udp_socket("127.0.0.1:0");
+fn send_worker(idx: usize, dst: SocketAddr, rx: &mut BusReader<ForwardingPacket>, config: SocketConfigurationParameter) {
+    let peer_socket = util::create_udp_socket_with_address("127.0.0.1:0", config);
     peer_socket.connect(dst).unwrap();
     println!("Binding queued blocking send socket on {}", peer_socket.local_addr().unwrap());
     loop {

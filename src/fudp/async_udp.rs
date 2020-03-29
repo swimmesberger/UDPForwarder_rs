@@ -12,16 +12,16 @@ use futures::future::join_all;
 #[tokio::main]
 pub async fn run(config: &ForwardingConfiguration) -> std::io::Result<()> {
     let peers = config.peers;
-    let listen_address = config.listen_address;
     let pks = &config.pks;
     let peers_count = peers.len();
     let send_thread_count = config.send_thread_count;
+    let socket_params = config.socket.parameters;
 
     if peers.is_empty() {
         return Ok(())
     }
 
-    let socket = UdpSocket::from_std(util::create_udp_socket(listen_address)).unwrap();
+    let socket = UdpSocket::from_std(util::create_udp_socket_with_config(config.socket)).unwrap();
     let socket_addr = socket.local_addr().unwrap();
     println!("Binding async receive socket on {}", socket_addr);
     let (mut sock_rx, _sock_tx)  = socket.split();
@@ -31,7 +31,7 @@ pub async fn run(config: &ForwardingConfiguration) -> std::io::Result<()> {
     for (idx, peer) in peers.iter().enumerate() {
         for _x in 0..send_thread_count {
             let mut peer_rx = channel_tx.subscribe();
-            let peer_socket = UdpSocket::from_std(util::create_udp_socket("0.0.0.0:0")).unwrap();
+            let peer_socket = UdpSocket::from_std(util::create_udp_socket_with_address("127.0.0.1:0", socket_params)).unwrap();
             peer_socket.connect(peer).await?;
             let peer_socket_addr = peer_socket.local_addr().unwrap();
             println!("Binding async send socket on {}", peer_socket_addr);

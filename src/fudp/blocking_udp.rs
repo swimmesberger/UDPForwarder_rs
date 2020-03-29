@@ -7,18 +7,18 @@ use parking_lot::Mutex;
 
 pub fn run(config: &ForwardingConfiguration) -> std::io::Result<()> {
     let peers = config.peers;
-    let listen_address = config.listen_address;
     let pks = &config.pks;
     let thread_count = config.send_thread_count;
+    let socket_params = config.socket.parameters;
 
-    let socket  = util::create_udp_socket(listen_address);
+    let socket  = util::create_udp_socket_with_config(config.socket);
     println!("Binding blocking receive socket on {}", socket.local_addr().unwrap());
 
     let mut send_sockets : Vec<Vec<Arc<UdpSocket>>> = Vec::with_capacity(peers.len());
     for _idx in 0..thread_count {
         let mut thread_send_sockets : Vec<Arc<UdpSocket>> = Vec::with_capacity(peers.len());
         for peer in peers.iter() {
-            let peer_socket = util::create_udp_socket("127.0.0.1:0");
+            let peer_socket = util::create_udp_socket_with_address("127.0.0.1:0", socket_params);
             peer_socket.connect(peer).unwrap();
             println!("Binding blocking send socket on {}", peer_socket.local_addr().unwrap());
             thread_send_sockets.push(Arc::new(peer_socket));

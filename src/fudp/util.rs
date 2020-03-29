@@ -42,19 +42,51 @@ impl ForwardingPacket {
     }
 }
 
-pub struct ForwardingConfiguration<'a> {
+#[derive(Copy, Clone)]
+pub struct SocketConfigurationParameter {
+    pub(crate) so_receive_buffer: usize,
+    pub(crate) so_send_buffer: usize,
+}
+
+impl SocketConfigurationParameter {
+    pub fn new(so_receive_buffer: usize, so_send_buffer: usize) -> SocketConfigurationParameter {
+        SocketConfigurationParameter {
+            so_receive_buffer,
+            so_send_buffer
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct SocketConfiguration<'a> {
     pub(crate) listen_address: &'a str,
+    pub(crate) parameters: SocketConfigurationParameter
+}
+
+impl<'a> SocketConfiguration<'a> {
+    pub fn new(listen_address: &'a str, so_receive_buffer: usize, so_send_buffer: usize) -> SocketConfiguration<'a> {
+        SocketConfiguration {
+            listen_address,
+            parameters: SocketConfigurationParameter::new(so_receive_buffer, so_send_buffer)
+        }
+    }
+}
+
+
+pub struct ForwardingConfiguration<'a> {
+    pub(crate) socket: &'a SocketConfiguration<'a>,
     pub(crate) peers: &'a Vec<SocketAddr>,
     pub(crate) pks: &'a mut PacketsPerSecond,
     pub(crate) send_packet_size: usize,
     pub(crate) send_thread_count: usize,
-    pub(crate) receive_thread_count: usize,
+    pub(crate) receive_thread_count: usize
 }
 
 impl<'a> ForwardingConfiguration<'a> {
-    pub fn new(listen_address: &'a str, peers: &'a Vec<SocketAddr>, pks: &'a mut PacketsPerSecond, send_packet_size: usize, send_thread_count: usize, receive_thread_count: usize) -> ForwardingConfiguration<'a> {
+    pub fn new(socket: &'a SocketConfiguration, peers: &'a Vec<SocketAddr>, pks: &'a mut PacketsPerSecond, send_packet_size: usize,
+               send_thread_count: usize, receive_thread_count: usize) -> ForwardingConfiguration<'a> {
         ForwardingConfiguration {
-            listen_address,
+            socket,
             peers,
             pks,
             send_packet_size,
@@ -128,9 +160,22 @@ impl PacketsPerSecond {
     }
 }
 
-pub fn create_udp_socket(listen_address: &str) -> UdpSocket {
+pub fn create_udp_socket_with_config(config: &SocketConfiguration) -> UdpSocket {
+    return create_udp_socket_with_address(config.listen_address, config.parameters);
+}
+
+pub fn create_udp_socket_with_address(listen_address: &str, config: SocketConfigurationParameter) -> UdpSocket {
+    return create_udp_socket(listen_address, config.so_receive_buffer, config.so_send_buffer);
+}
+
+pub fn create_udp_socket(listen_address: &str, so_receive_buffer: usize, so_send_buffer: usize) -> UdpSocket {
     let socket = UdpBuilder::new_v4().unwrap().bind(listen_address).unwrap();
-    socket.set_recv_buffer_size(BUFFER_SIZE).unwrap();
+    if so_receive_buffer > 0 {
+        socket.set_recv_buffer_size(so_receive_buffer).unwrap();
+    }
+    if so_send_buffer > 0 {
+        socket.set_send_buffer_size(so_send_buffer).unwrap();
+    }
 
     if cfg!(windows) {
         // on windows a connection reset error is thrown on receive when we send to a unbound port

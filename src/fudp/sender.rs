@@ -1,14 +1,12 @@
 use crate::fudp::util;
 use bytes::{BytesMut, BufMut};
 use rand::Rng;
-use crate::fudp::util::{ForwardingConfiguration, PacketsPerSecond};
+use crate::fudp::util::{ForwardingConfiguration};
 use std::net::SocketAddr;
 
 pub fn run(config: &ForwardingConfiguration) -> std::io::Result<()> {
     let peers = config.peers;
-    let listen_address = config.listen_address;
     let packet_size = config.send_packet_size;
-    let pks = &config.pks;
     let thread_count = config.send_thread_count;
 
     if peers.is_empty() {
@@ -18,7 +16,7 @@ pub fn run(config: &ForwardingConfiguration) -> std::io::Result<()> {
     crossbeam::scope(|scope| {
         for idx in 0..thread_count {
             let _child = scope.builder().name(format!("Send-Worker-{}", idx)).spawn(|_| {
-                send_worker(listen_address, peers, packet_size, &pks);
+                send_worker(peers, packet_size, config);
             }).unwrap();
         }
     }).unwrap();
@@ -26,8 +24,9 @@ pub fn run(config: &ForwardingConfiguration) -> std::io::Result<()> {
 }
 
 #[inline]
-fn send_worker(listen_address: &str, peers: &Vec<SocketAddr>, packet_size: usize, pks: &&&mut PacketsPerSecond) {
-    let socket = util::create_udp_socket(listen_address);
+fn send_worker(peers: &Vec<SocketAddr>, packet_size: usize, config: &ForwardingConfiguration) {
+    let pks = &config.pks;
+    let socket = util::create_udp_socket_with_config(config.socket);
     println!("Binding sending socket on {}", socket.local_addr().unwrap());
 
     let is_single_target = peers.len() == 1;
