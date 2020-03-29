@@ -61,6 +61,8 @@ fn read_worker(socket: &UdpSocket, peers: &Vec<SocketAddr>, bus_locked: Option<&
         buf = BytesMut::from(buf_backed.as_slice());
     }
 
+    let has_bus_locked = bus_locked.is_some();
+    let has_bus_unlocked = bus_unlocked.is_some();
     loop {
         let read_result = socket.recv_from(buf.as_mut());
         if read_result.is_err() {
@@ -82,10 +84,10 @@ fn read_worker(socket: &UdpSocket, peers: &Vec<SocketAddr>, bus_locked: Option<&
 
         // Redeclare `buf` as slice of the received data
         let read_buf: Bytes = BytesMut::from(&buf[..read_bytes]).freeze();
-        if bus_locked.is_some() {
+        if has_bus_locked {
             let mut send_bus = bus_locked.unwrap().lock().unwrap();
             send_bus.broadcast(ForwardingPacket::new(read_buf, peers_count));
-        } else if bus_unlocked.is_some() {
+        } else if has_bus_unlocked {
             bus_unlocked.as_mut().unwrap().broadcast(ForwardingPacket::new(read_buf, peers_count));
         }
         pks.on_packet();

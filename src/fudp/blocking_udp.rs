@@ -28,23 +28,30 @@ pub fn run(config: &ForwardingConfiguration) -> std::io::Result<()> {
 
     println!("Sending to {:?}", peers);
 
-    let recv_mutex = Arc::new(Mutex::new(0));
-    crossbeam::scope(|scope| {
-        for idx in 0..thread_count {
-            let mutex_clone = recv_mutex.clone();
-            let copy_send_sockets = send_sockets.get(idx).unwrap().clone();
-            println!("Starting read worker for {}", socket.local_addr().unwrap());
-            let _child = scope.builder().name(format!("Receive-Worker-{}", idx)).spawn(|_| {
-                read_worker(&socket, copy_send_sockets, &pks, mutex_clone);
-            }).unwrap();
-        }
-    }).unwrap();
+    if thread_count == 1 {
+        let copy_send_sockets = send_sockets.get(0).unwrap().clone();
+        println!("Starting read worker for {}", socket.local_addr().unwrap());
+        read_worker(&socket, copy_send_sockets, &pks, &mut None);
+    } else {
+        let recv_mutex = Arc::new(Mutex::new(0));
+        crossbeam::scope(|scope| {
+            for idx in 0..thread_count {
+                let mutex_clone = recv_mutex.clone();
+                let copy_send_sockets = send_sockets.get(idx).unwrap().clone();
+                println!("Starting read worker for {}", socket.local_addr().unwrap());
+                let _child = scope.builder().name(format!("Receive-Worker-{}", idx)).spawn(|_| {
+                    let mut mutex_option = Option::from(mutex_clone);
+                    read_worker(&socket, copy_send_sockets, &pks, &mut mutex_option);
+                }).unwrap();
+            }
+        }).unwrap();
+    }
 
     return Ok(());
 }
 
 #[inline]
-fn read_worker(read_socket: &UdpSocket, mut write_sockets: Vec<Arc<UdpSocket>>, pks: &&&mut PacketsPerSecond, recv_mutex: Arc<Mutex<i32>>) {
+fn read_worker(read_socket: &UdpSocket, mut write_sockets: Vec<Arc<UdpSocket>>, pks: &&&mut PacketsPerSecond, recv_mutex: &mut Option<Arc<Mutex<i32>>>) {
     // init full buffer - otherwise we can't receive anything,
     let mut buf;
     {
@@ -52,6 +59,7 @@ fn read_worker(read_socket: &UdpSocket, mut write_sockets: Vec<Arc<UdpSocket>>, 
         buf = BytesMut::from(buf_backed.as_slice());
     }
 
+    let has_mutex = recv_mutex.is_some();
     loop {
         #[cfg(debug_assertions)]
         println!();
@@ -59,11 +67,14 @@ fn read_worker(read_socket: &UdpSocket, mut write_sockets: Vec<Arc<UdpSocket>>, 
         println!("### Reading data");
 
         let read_result;
-        // lock this scope because when multiple threads block in recv simultaneously WSAEINPROGRESS error is thrown to prevent that we use a mutex
-        {
-            let _lock_scope = recv_mutex.lock();
+        if has_mutex {
+            // lock this scope because when multiple threads block in recv simultaneously WSAEINPROGRESS error is thrown to prevent that we use a mutex
+            let _lock_scope = recv_mutex.as_mut().unwrap().lock();
+            read_result = read_socket.recv(&mut buf);
+        } else {
             read_result = read_socket.recv(&mut buf);
         }
+
         if read_result.is_err() {
             #[cfg(debug_assertions)]
             println!("Error on read {}", read_result.unwrap_err());
