@@ -1,27 +1,96 @@
 use tokio;
 use tokio::net::UdpSocket;
-use bytes::{BytesMut};
+use tokio::net::udp::RecvHalf;
+use bytes::{BytesMut, Bytes};
 use crate::fudp::util;
-use crate::fudp::util::{ForwardingConfiguration};
+use crate::fudp::util::{ForwardingConfiguration, ForwardingPacket, PacketsPerSecond};
+use std::net::SocketAddr;
+use tokio::sync::broadcast;
+use tokio::sync::broadcast::Sender;
+use futures::future::join_all;
 
 #[tokio::main]
-pub async fn run(config: &mut ForwardingConfiguration) -> std::io::Result<()>  {
+pub async fn run(config: &ForwardingConfiguration) -> std::io::Result<()> {
     let peers = config.peers;
     let listen_address = config.listen_address;
-    let pks = &mut config.pks;
+    let pks = &config.pks;
+    let peers_count = peers.len();
+    let send_thread_count = config.send_thread_count;
+
     if peers.is_empty() {
         return Ok(())
     }
 
     let socket = UdpSocket::from_std(util::create_udp_socket(listen_address)).unwrap();
-    println!("Binding async socket on {}", socket.local_addr().unwrap());
+    let socket_addr = socket.local_addr().unwrap();
+    println!("Binding async receive socket on {}", socket_addr);
+    let (mut sock_rx, _sock_tx)  = socket.split();
 
-    let (mut receive, mut send) = socket.split();
+    let (mut channel_tx, _channel_rx) = broadcast::channel(util::QUEUE_SIZE);
+    let mut children = Vec::with_capacity(peers_count);
+    for (idx, peer) in peers.iter().enumerate() {
+        for _x in 0..send_thread_count {
+            let mut peer_rx = channel_tx.subscribe();
+            let peer_socket = UdpSocket::from_std(util::create_udp_socket("0.0.0.0:0")).unwrap();
+            peer_socket.connect(peer).await?;
+            let peer_socket_addr = peer_socket.local_addr().unwrap();
+            println!("Binding async send socket on {}", peer_socket_addr);
 
-    let mut buf = BytesMut::with_capacity(util::BUFFER_SIZE);
-    // init full buffer - otherwise we can't receive anything
-    unsafe {
-        buf.set_len(util::BUFFER_SIZE);
+            let (_peer_sock_rx, mut peer_sock_tx)  = peer_socket.split();
+            let child = tokio::spawn(async move {
+                loop {
+                    let read_buf_packet_result = peer_rx.recv().await;
+                    if read_buf_packet_result.is_err() {
+                        #[cfg(debug_assertions)]
+                        println!("Error on channel receive {}", peer_socket_addr);
+                        continue;
+                    }
+
+                    let read_buf_packet: ForwardingPacket = read_buf_packet_result.unwrap();
+                    if !read_buf_packet.check_sent(idx) {
+                        continue;
+                    }
+                    let read_buf: &[u8] = read_buf_packet.bytes();
+                    #[cfg(debug_assertions)]
+                    println!("Sending data {} to {}", read_buf.len(), peer_socket_addr);
+
+                    let write_result = peer_sock_tx.send(read_buf).await;
+                    if write_result.is_err() {
+                        #[cfg(debug_assertions)]
+                        println!("Error on send {}", peer_socket_addr);
+                        continue;
+                    }
+
+                    if cfg!(debug_assertions) {
+                        let written_bytes = write_result.unwrap();
+                        println!("Sent data {} to {}", written_bytes, peer_socket_addr);
+                    } else {
+                        write_result.unwrap();
+                    }
+                }
+            });
+            children.push(child);
+        }
+    }
+
+    println!("Starting read worker for {}", socket_addr);
+
+    read_worker(&mut sock_rx, &peers, &mut channel_tx, &pks).await;
+
+    join_all(children).await;
+
+    return Ok(());
+}
+
+#[inline]
+async fn read_worker(socket: &mut RecvHalf, peers: &Vec<SocketAddr>, sender: &mut Sender<ForwardingPacket>, pks: &&&mut PacketsPerSecond) {
+    let peers_count = peers.len();
+
+    // init full buffer - otherwise we can't receive anything,
+    let mut buf;
+    {
+        let buf_backed: Vec<u8> = vec![0; util::BUFFER_SIZE];
+        buf = BytesMut::from(buf_backed.as_slice());
     }
 
     println!("Sending to {:?}", peers);
@@ -32,7 +101,7 @@ pub async fn run(config: &mut ForwardingConfiguration) -> std::io::Result<()>  {
         #[cfg(debug_assertions)]
         println!("### Reading data");
 
-        let read_bytes_result = receive.recv(&mut buf).await;
+        let read_bytes_result = socket.recv(&mut buf).await;
         if read_bytes_result.is_err() {
             #[cfg(debug_assertions)]
             println!("Error on read {}", read_bytes_result.unwrap_err());
@@ -49,28 +118,12 @@ pub async fn run(config: &mut ForwardingConfiguration) -> std::io::Result<()>  {
         #[cfg(debug_assertions)]
         println!("Read data {}", read_bytes);
 
-        // get a reference to the buffer from zero to the read bytes
-        // this ensures that every peer only gets as much data as we read
-        let mut read_buf = &buf[0..read_bytes];
-        for peer in peers.iter() {
-            #[cfg(debug_assertions)]
-            println!("Sending data {} to {}", read_buf.len(), peer);
-
-            // we have to wait here because in tokio we have no possibility to somehow clone the sender
-            // so we can only send one packet at a time
-            let written_bytes_result = send.send_to(&mut read_buf, peer).await;
-            if written_bytes_result.is_err() {
-                #[cfg(debug_assertions)]
-                println!("Error on send {}", peer);
-                continue;
-            }
-            if cfg!(debug_assertions) {
-                let written_bytes = written_bytes_result.unwrap();
-                println!("Sent data {} to {}", written_bytes, peer);
-            } else{
-                written_bytes_result.unwrap();
-            }
-        }
+        let read_buf: Bytes = BytesMut::from(&buf[..read_bytes]).freeze();
+        let packet = ForwardingPacket::new(read_buf, peers_count);
+        let _sub_count= match sender.send(packet)   {
+            Ok(sub_count) => sub_count,
+            Err(_e) => 0,
+        };
 
         pks.on_packet();
     }

@@ -14,6 +14,7 @@ tokio-util = { version = "0.3.1", features = ["full"] }
 clap = "2.33.0"
 bytes = "0.5"
 crossbeam-channel = "0.4"
+crossbeam = "0.7.3"
 net2 = "0.2"
 num-format = { version = "0.4.0" }
 atomic-counter = "1.0.1"
@@ -21,8 +22,7 @@ rand = "0.7.3"
 rpmalloc = "0.1.0"
 #mimalloc = { version = "0.1.18", default-features = false }
 bus = "2.2.3"
-coarsetime = "0.1.12"
-arrayvec = "0.5.1"
+parking_lot = "0.10.0"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["mswsock"] }

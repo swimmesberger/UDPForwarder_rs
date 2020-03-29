@@ -25,12 +25,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arrayvec"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cff77d8686867eceff3105329d4698d96c2391c176d5d03adc90c7389162b5b8"
-
-[[package]]
 name = "atomic-counter"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -120,13 +114,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "coarsetime"
-version = "0.1.12"
+name = "crossbeam"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bac87404ed1c708d9cdd0094449e70aadc1ab73c291d2cf536e946a413594e5"
+checksum = "69323bff1fb41c635347b8ead484a5ca6c3f11914d784170b158d8449ab07f8e"
 dependencies = [
- "lazy_static",
- "libc",
+ "cfg-if",
+ "crossbeam-channel",
+ "crossbeam-deque",
+ "crossbeam-epoch",
+ "crossbeam-queue",
+ "crossbeam-utils",
 ]
 
 [[package]]
@@ -137,6 +135,42 @@ checksum = "cced8691919c02aac3cb0a1bc2e9b73d89e832bf9a06fc579d4e71b68a2da061"
 dependencies = [
  "crossbeam-utils",
  "maybe-uninit",
+]
+
+[[package]]
+name = "crossbeam-deque"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f02af974daeee82218205558e51ec8768b48cf524bd01d550abe5573a608285"
+dependencies = [
+ "crossbeam-epoch",
+ "crossbeam-utils",
+ "maybe-uninit",
+]
+
+[[package]]
+name = "crossbeam-epoch"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "058ed274caafc1f60c4997b5fc07bf7dc7cca454af7c6e81edffe5f33f70dace"
+dependencies = [
+ "autocfg",
+ "cfg-if",
+ "crossbeam-utils",
+ "lazy_static",
+ "maybe-uninit",
+ "memoffset",
+ "scopeguard",
+]
+
+[[package]]
+name = "crossbeam-queue"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c695eeca1e7173472a32221542ae469b3e9aac3a4fc81f7696bcad82029493db"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
 ]
 
 [[package]]
@@ -321,6 +355,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dea0c0405123bba743ee3f91f49b1c7cfb684eef0da0a50110f758ccf24cdff0"
 
 [[package]]
+name = "lock_api"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79b2de95ecb4691949fea4716ca53cdbcfccb2c612e19644a8bad05edcf9f47b"
+dependencies = [
+ "scopeguard",
+]
+
+[[package]]
 name = "log"
 version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -340,6 +383,15 @@ name = "memchr"
 version = "2.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3728d817d99e5ac407411fa471ff9800a778d88a24685968b36824eaf4bee400"
+
+[[package]]
+name = "memoffset"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4fc2c02a7e374099d4ee95a193111f72d2110197fe200272371758f6c3643d8"
+dependencies = [
+ "autocfg",
+]
 
 [[package]]
 name = "mio"
@@ -428,7 +480,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bafe4179722c2894288ee77a9f044f02811c86af699344c498b0840c698a2465"
 dependencies = [
- "arrayvec 0.4.12",
+ "arrayvec",
  "itoa",
 ]
 
@@ -440,6 +492,16 @@ checksum = "46203554f085ff89c235cd12f7075f3233af9b11ed7c9e16dfe2560d03313ce6"
 dependencies = [
  "hermit-abi",
  "libc",
+]
+
+[[package]]
+name = "parking_lot"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92e98c49ab0b7ce5b222f2cc9193fc4efe11c6d0bd4f648e374684a6857b1cfc"
+dependencies = [
+ "lock_api",
+ "parking_lot_core",
 ]
 
 [[package]]
@@ -578,6 +640,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "scopeguard"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d29ab0c6d3fc0ee92fe66e2d99f700eab17a8d57d1c1d3b748380fb20baa78cd"
+
+[[package]]
 name = "signal-hook-registry"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -691,16 +759,16 @@ dependencies = [
 name = "udp_forwarder"
 version = "0.3.1"
 dependencies = [
- "arrayvec 0.5.1",
  "atomic-counter",
  "bus",
  "bytes",
  "clap",
- "coarsetime",
+ "crossbeam",
  "crossbeam-channel",
  "futures",
  "net2",
  "num-format",
+ "parking_lot",
  "rand",
  "rpmalloc",
  "tokio",

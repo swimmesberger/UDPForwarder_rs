@@ -2,30 +2,64 @@ use std::mem;
 use std::net::{UdpSocket, SocketAddr};
 use net2::{UdpBuilder, UdpSocketExt};
 use num_format::{ToFormattedString, Locale};
-use std::io::Write;
+use std::io::{Write};
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time;
 use atomic_counter::{AtomicCounter, RelaxedCounter};
 use std::sync::{Arc};
+use bytes::Bytes;
 
 pub const BUFFER_SIZE: usize = 65550;
+pub const QUEUE_SIZE: usize = 65550;
+
+#[derive(Clone)]
+pub struct ForwardingPacket {
+    data: Bytes,
+    is_sent: Vec<Arc<AtomicBool>>
+}
+
+impl ForwardingPacket {
+    pub fn new(data: Bytes, capacity: usize) -> ForwardingPacket {
+        let mut is_sent: Vec<Arc<AtomicBool>> = Vec::with_capacity(capacity);
+        for _x in 0..capacity {
+            is_sent.push(Arc::new(AtomicBool::new(false)));
+        }
+        ForwardingPacket {
+            data,
+            is_sent
+        }
+    }
+
+    pub fn check_sent(&self, idx: usize) -> bool {
+        let is_send_arc = &self.is_sent[idx];
+        return is_send_arc.compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed).is_ok();
+    }
+
+    pub fn bytes(&self) -> &Bytes {
+        return &self.data;
+    }
+}
 
 pub struct ForwardingConfiguration<'a> {
     pub(crate) listen_address: &'a str,
     pub(crate) peers: &'a Vec<SocketAddr>,
     pub(crate) pks: &'a mut PacketsPerSecond,
-    pub(crate) send_packet_size: usize
+    pub(crate) send_packet_size: usize,
+    pub(crate) send_thread_count: usize,
+    pub(crate) receive_thread_count: usize,
 }
 
 impl<'a> ForwardingConfiguration<'a> {
-    pub fn new(listen_address: &'a str, peers: &'a Vec<SocketAddr>, pks: &'a mut PacketsPerSecond, send_packet_size: usize) -> ForwardingConfiguration<'a> {
+    pub fn new(listen_address: &'a str, peers: &'a Vec<SocketAddr>, pks: &'a mut PacketsPerSecond, send_packet_size: usize, send_thread_count: usize, receive_thread_count: usize) -> ForwardingConfiguration<'a> {
         ForwardingConfiguration {
             listen_address,
             peers,
             pks,
-            send_packet_size
+            send_packet_size,
+            send_thread_count,
+            receive_thread_count
         }
     }
 }
@@ -51,7 +85,7 @@ impl PacketsPerSecond {
     }
 
     #[inline]
-    pub fn on_packet(&mut self) {
+    pub fn on_packet(&self) {
         self.packet_count.inc();
     }
 
