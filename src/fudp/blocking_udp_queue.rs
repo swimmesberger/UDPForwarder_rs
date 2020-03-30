@@ -209,8 +209,8 @@ impl BusConfig {
 pub struct BusLockedConfig<'a> {
     bus_locked: Option<&'a Arc<Mutex< Bus<ForwardingPacket>>>>,
     bus_unlocked: &'a mut Option<Bus<ForwardingPacket>>,
-    pub(crate) bus_basic_locked: Option<&'a Arc<Mutex<Bus<Bytes>>>>,
-    pub(crate) bus_basic_unlocked: &'a mut Option<Bus<Bytes>>
+    bus_basic_locked: Option<&'a Arc<Mutex<Bus<Bytes>>>>,
+    bus_basic_unlocked: &'a mut Option<Bus<Bytes>>
 }
 
 impl<'a> BusLockedConfig<'a> {
