@@ -13,7 +13,7 @@ const DEFAULT_LISTEN_ADDRESS: &str = "0.0.0.0:0";
 
 fn main() -> std::io::Result<()> {
     let matches = App::new("udp_forwarder")
-        .version("0.3.1")
+        .version("0.4.0")
         .about("Forwards UDP data from one port to multiple others")
         .author("Simon Wimmesberger")
         .arg(Arg::with_name("input-address").short("i").help("The address the server should listen on").required(false).default_value("").takes_value(true))
