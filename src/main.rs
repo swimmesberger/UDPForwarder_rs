@@ -59,7 +59,7 @@ fn main() -> std::io::Result<()> {
         if is_async {
             send_threads_s = "1";
         } else if is_queue {
-            send_threads_s = "2";
+            send_threads_s = "1";
         } else if is_sending {
             send_threads_s = "2";
         } else if is_block {
