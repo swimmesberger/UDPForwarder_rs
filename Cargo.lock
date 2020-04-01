@@ -25,6 +25,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrayvec"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cff77d8686867eceff3105329d4698d96c2391c176d5d03adc90c7389162b5b8"
+
+[[package]]
 name = "atomic-counter"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -480,7 +486,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bafe4179722c2894288ee77a9f044f02811c86af699344c498b0840c698a2465"
 dependencies = [
- "arrayvec",
+ "arrayvec 0.4.12",
  "itoa",
 ]
 
@@ -759,6 +765,7 @@ dependencies = [
 name = "udp_forwarder"
 version = "0.4.0"
 dependencies = [
+ "arrayvec 0.5.1",
  "atomic-counter",
  "bus",
  "bytes",

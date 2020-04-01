@@ -23,6 +23,7 @@ rpmalloc = "0.1.0"
 #mimalloc = { version = "0.1.18", default-features = false }
 bus = "2.2.3"
 parking_lot = "0.10.0"
+arrayvec = "0.5.1"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["mswsock"] }
+winapi = { version = "0.3", features = ["mswsock", "sysinfoapi", "limits", "processthreadsapi", "memoryapi", "synchapi"] }
