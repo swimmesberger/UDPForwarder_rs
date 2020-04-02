@@ -13,9 +13,9 @@ use winapi::shared::ntdef::{HANDLE, PVOID};
 use winapi::shared::minwindef::{DWORD, LPVOID, LPDWORD, ULONG};
 use winapi::um::mswsock::{WSAID_MULTIPLE_RIO, RIO_EXTENSION_FUNCTION_TABLE, RIO_NOTIFICATION_COMPLETION, RIO_NOTIFICATION_COMPLETION_u, RIO_NOTIFICATION_COMPLETION_u_s2, RIO_IOCP_COMPLETION};
 use winapi::shared::guiddef::GUID;
-use winapi::um::ioapiset::{CreateIoCompletionPort, GetQueuedCompletionStatus};
+use winapi::um::ioapiset::{CreateIoCompletionPort, GetQueuedCompletionStatus, PostQueuedCompletionStatus};
 use winapi::um::minwinbase::{OVERLAPPED, LPOVERLAPPED, CRITICAL_SECTION, LPCRITICAL_SECTION};
-use winapi::shared::mswsockdef::{RIO_CQ, RIO_INVALID_CQ, RIO_INVALID_BUFFERID, RIO_BUF, PRIO_BUF, RIO_BUFFERID, RIORESULT, PRIORESULT, RIO_CORRUPT_CQ};
+use winapi::shared::mswsockdef::{RIO_CQ, RIO_INVALID_CQ, RIO_INVALID_BUFFERID, RIO_BUF, PRIO_BUF, RIO_BUFFERID, RIORESULT, PRIORESULT, RIO_CORRUPT_CQ, RIO_MSG_DEFER, RIO_MSG_COMMIT_ONLY};
 use winapi::um::sysinfoapi::GetSystemInfo;
 use winapi::um::sysinfoapi::SYSTEM_INFO;
 use winapi::vc::limits::UINT_MAX;
@@ -23,7 +23,7 @@ use winapi::um::processthreadsapi::GetCurrentProcess;
 use winapi::um::winnt::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, PCHAR, ULONGLONG};
 use winapi::um::memoryapi::VirtualAllocEx;
 use winapi::shared::basetsd::{SIZE_T, PULONG_PTR, ULONG_PTR};
-use winapi::um::synchapi::EnterCriticalSection;
+use winapi::um::synchapi::{EnterCriticalSection, OpenEventA};
 use winapi::um::synchapi::LeaveCriticalSection;
 use winapi::um::synchapi::InitializeCriticalSectionAndSpinCount;
 use winapi::um::synchapi::DeleteCriticalSection;
@@ -37,19 +37,23 @@ use parking_lot::Mutex;
 use std::ops::DerefMut;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use winapi::_core::ptr::null;
 
-const RIO_PENDING_RECVS: u32 = 10_000;
-const RIO_PENDING_SENDS: u32 = 10_000;
+const RIO_PENDING_RECVS: u32 = 100_000;
+const RIO_PENDING_SENDS: u32 = 100_000;
 const RECV_BUFFER_SIZE: u32 = 1024;
 const SEND_BUFFER_SIZE: u32 = 1024;
 // maximum size of a native SOCKET_ADDR
 const ADDR_BUFFER_SIZE: u32 = 64;
 const NUM_IOCP_THREADS: u32 = 4;
 const RIO_MAX_RESULTS: usize = 1024;
+const RIO_SEND_PACKET_BUFFER: usize = 50_000;
 const MUTEX_SPIN_TIME_COUNT: u32 = 4000;
 
 const CK_STOP: usize = 0;
 const CK_START: usize = 1;
+const CK_SENT: usize = 2;
+const CK_COPIED: usize = 3;
 
 const OP_NONE: u32 = 0;
 const OP_RECV: u32 = 1;
@@ -61,7 +65,8 @@ pub fn run(config: &ForwardingConfiguration) -> std::io::Result<()> {
     let peer_count = config.peers.len();
     // number of send targets - we create registered buffer for the socket address of each send target
     let addr_buffer_count : u32 = peer_count as u32;
-    let thread_count : u32 = config.send_thread_count as u32;
+    let receive_thread_count : u32 = config.receive_thread_count as u32;
+    let send_thread_count : u32 = config.send_thread_count as u32;
     let total_rio_pending_sends = RIO_PENDING_SENDS * peer_count as u32;
     let total_pending = RIO_PENDING_RECVS + total_rio_pending_sends;
     let pks = &config.pks;
@@ -74,10 +79,13 @@ pub fn run(config: &ForwardingConfiguration) -> std::io::Result<()> {
     bind_socket(g_socket, &bind_address).unwrap();
 
     let g_rio = create_rio_function_table(g_socket).unwrap();
-    let g_hiocp : HANDLE = create_io_completion_port(thread_count).unwrap();
+    let g_receive_iocp : HANDLE = create_io_completion_port(receive_thread_count).unwrap();
+    let g_send_iocp : HANDLE = create_io_completion_port(send_thread_count).unwrap();
 
-    let g_completion_queue = create_io_completion_queue(g_rio, g_hiocp, total_pending).unwrap();
-    let g_request_queue = create_io_request_queue(g_rio, g_socket, g_completion_queue, RIO_PENDING_RECVS, total_rio_pending_sends).unwrap();
+    let g_request_completion_queue = create_io_completion_queue(g_rio, g_receive_iocp, RIO_PENDING_RECVS).unwrap();
+    let g_send_completion_queue = create_io_completion_queue(g_rio, g_send_iocp, total_rio_pending_sends).unwrap();
+
+    let g_request_queue = create_io_request_queue(g_rio, g_socket, g_request_completion_queue, g_send_completion_queue, RIO_PENDING_RECVS, total_rio_pending_sends).unwrap();
 
     let mut send_buffers = Vec::with_capacity(peer_count);
     // create buffers for each destination
@@ -99,24 +107,36 @@ pub fn run(config: &ForwardingConfiguration) -> std::io::Result<()> {
     post_receives(g_rio, g_request_queue, &mut receive_buffers.buffers).unwrap();
 
     let shared_rio = SharedRioExtensionFunctionTable(g_rio);
-    let shared_completion_queue_copy = SharedRioCQ(g_completion_queue);
-    let shared_request_queue_copy = SharedRioCQ(g_request_queue);
-    let shared_hiocp = SharedHandle(g_hiocp);
+    let shared_request_completion_queue = SharedRioCQ(g_request_completion_queue);
+    let shared_send_completion_queue = SharedRioCQ(g_send_completion_queue);
+    let shared_request_queue = SharedRioCQ(g_request_queue);
+    let shared_request_iocp = SharedHandle(g_receive_iocp);
+    let shared_send_iocp = SharedHandle(g_send_iocp);
     let buffers = RioBuffers::new(&mut address_buffers, &mut send_buffers, &mut receive_buffers, peer_count, pks);
     let mut shared_buffers = Arc::new(Mutex::new(buffers));
 
     crossbeam::scope(|scope| {
-        for idx in 0..thread_count {
+        for idx in 0..receive_thread_count {
             println!("Starting read worker for {}", bind_address);
-            let t_name = format!("RIO-Worker-{}", idx);
+            let t_name = format!("RIO-Receive-Worker-{}", idx);
             scope.builder().name(t_name).spawn(|_| {
-                iocp_worker(&shared_rio, &shared_completion_queue_copy, &shared_request_queue_copy, &shared_hiocp,  &shared_buffers);
+                iocp_receive_worker(&shared_rio, &shared_request_completion_queue, &shared_request_queue, &shared_request_iocp, &shared_send_iocp,  &shared_buffers);
+                println!("Thread {} exited", std::thread::current().name().expect("No thread name"));
+            }).unwrap();
+        }
+
+        for idx in 0..send_thread_count {
+            println!("Starting send worker for {}", bind_address);
+            let t_name = format!("RIO-Send-Worker-{}", idx);
+            scope.builder().name(t_name).spawn(|_| {
+                iocp_send_worker(&shared_rio, &shared_send_completion_queue, &shared_request_queue, &shared_request_iocp, &shared_send_iocp,  &shared_buffers);
                 println!("Thread {} exited", std::thread::current().name().expect("No thread name"));
             }).unwrap();
         }
 
         // notify completion-ready
-        rio_notify(g_rio, g_completion_queue).unwrap()
+        rio_notify(g_rio, g_request_completion_queue).unwrap();
+        rio_notify(g_rio, g_send_completion_queue).unwrap();
     }).unwrap();
 
     let mut buffers_lock = shared_buffers.lock();
@@ -124,7 +144,8 @@ pub fn run(config: &ForwardingConfiguration) -> std::io::Result<()> {
     let send_buffers = &buffers.send_buffers;
 
     close_socket(g_socket).unwrap();
-    close_completion_queue(g_rio, g_completion_queue).unwrap();
+    close_completion_queue(g_rio, g_request_completion_queue).unwrap();
+    close_completion_queue(g_rio, g_send_completion_queue).unwrap();
     for send_buffer in send_buffers.iter() {
         deregister_buffer(g_rio, send_buffer.rio_id()).unwrap();
     }
@@ -305,7 +326,7 @@ fn create_io_completion_queue(g_rio: RIO_EXTENSION_FUNCTION_TABLE, g_hiocp: HAND
     }
 }
 
-fn create_io_request_queue(g_rio: RIO_EXTENSION_FUNCTION_TABLE, g_socket: SOCKET, g_completion_queue: RIO_CQ, max_outstanding_receive: u32, max_outstanding_send: u32) -> std::io::Result<RIO_CQ> {
+fn create_io_request_queue(g_rio: RIO_EXTENSION_FUNCTION_TABLE, g_socket: SOCKET, g_receive_completion_queue: RIO_CQ, g_send_completion_queue: RIO_CQ, max_outstanding_receive: u32, max_outstanding_send: u32) -> std::io::Result<RIO_CQ> {
     unsafe {
         // must be 1!!
         let max_receive_data_buffers: ULONG = 1;
@@ -313,7 +334,7 @@ fn create_io_request_queue(g_rio: RIO_EXTENSION_FUNCTION_TABLE, g_socket: SOCKET
         let max_send_data_buffers: ULONG = 1;
         // creating RIO RQ
         // SEND and RECV within one CQ (you can do with two CQs, seperately)
-        let g_request_queue : RIO_CQ = (g_rio.RIOCreateRequestQueue.unwrap())(g_socket, max_outstanding_receive as ULONG, max_receive_data_buffers, max_outstanding_send as ULONG, max_send_data_buffers, g_completion_queue, g_completion_queue, null_mut());
+        let g_request_queue : RIO_CQ = (g_rio.RIOCreateRequestQueue.unwrap())(g_socket, max_outstanding_receive as ULONG, max_receive_data_buffers, max_outstanding_send as ULONG, max_send_data_buffers, g_receive_completion_queue, g_send_completion_queue, null_mut());
         if g_request_queue == RIO_INVALID_CQ {
             Err(std::io::Error::last_os_error())
         } else {
@@ -392,55 +413,199 @@ fn round_up(n: u32, m:u32) -> u32 {
     return ((n + m - 1) / m) * m;
 }
 
-fn iocp_worker(shared_rio: &SharedRioExtensionFunctionTable, shared_completion_queue: &SharedRioCQ, shared_request_queue: &SharedRioCQ, shared_hiocp: &SharedHandle, mutex: &Mutex<RioBuffers>) {
+fn iocp_receive_worker(shared_rio: &SharedRioExtensionFunctionTable, shared_completion_queue: &SharedRioCQ, shared_request_queue: &SharedRioCQ, shared_request_iocp: &SharedHandle, shared_send_iocp: &SharedHandle, mutex: &Mutex<RioBuffers>) {
     let g_rio = shared_rio.0;
     let g_completion_queue = shared_completion_queue.0;
     let g_request_queue = shared_request_queue.0;
-    let g_hiocp = shared_hiocp.0;
+    let g_request_iocp = shared_request_iocp.0;
+    let g_send_iocp = shared_send_iocp.0;
+
+    let mut results_vec: ArrayVec<[RIORESULT;RIO_MAX_RESULTS]> = ArrayVec::<[RIORESULT; RIO_MAX_RESULTS]>::new();
+    let mut number_of_bytes : u32 = 0;
+    let mut completion_key : usize = CK_STOP;
+    let mut overlapped : LPOVERLAPPED = null_mut();
+    let mut offset = 0;
+    let mut last_num_results = 0;
+    loop {
+        // Wait for the IOCP to be queued from RIO that we have results in our CQ
+        get_queued_completion_status(g_request_iocp, &mut number_of_bytes, &mut completion_key, &mut overlapped).unwrap();
+
+        if completion_key == CK_STOP {
+            break;
+        }
+
+        // we have some outstanding data that needs to be copied to the send buffers
+        if offset != 0 && last_num_results != 0 {
+            let expected_count = last_num_results-offset;
+            let copied_count = handle_receive_result(g_rio, g_request_queue, &results_vec, offset, last_num_results, mutex);
+            if copied_count != expected_count {
+                offset += copied_count;
+                // we again failed to copy all data - retry next signal
+                continue;
+            }
+        }
+
+        // this signal is just for us to copy outstanding results - it does not mean that there are already real IO events to read
+        if completion_key == CK_SENT {
+            continue;
+        }
+
+        // do not call get_queued_completion_status until we have zero results - this ensures that we do not waste a syscall on high load
+        loop {
+            let num_results= do_dequeue(g_rio, g_completion_queue, &mut results_vec, mutex);
+            let copied_count = handle_receive_result(g_rio, g_request_queue, &results_vec, 0, num_results, mutex);
+            if copied_count != 0 {
+                // notify the send iocp that we have copied more data
+                post_queued_completion_status(g_send_iocp, CK_COPIED).unwrap();
+            }
+            if copied_count != num_results {
+                offset += copied_count;
+                last_num_results = num_results;
+                break;
+            }
+        }
+    }
+}
+
+fn iocp_send_worker(shared_rio: &SharedRioExtensionFunctionTable, shared_completion_queue: &SharedRioCQ, shared_request_queue: &SharedRioCQ, shared_request_iocp: &SharedHandle, shared_send_iocp: &SharedHandle, mutex: &Mutex<RioBuffers>) {
+    let g_rio = shared_rio.0;
+    let g_completion_queue = shared_completion_queue.0;
+    let g_request_queue = shared_request_queue.0;
+    let g_request_iocp = shared_request_iocp.0;
+    let g_send_iocp = shared_send_iocp.0;
 
     let mut results_vec: ArrayVec<[RIORESULT;RIO_MAX_RESULTS]> = ArrayVec::<[RIORESULT; RIO_MAX_RESULTS]>::new();
     let mut number_of_bytes : u32 = 0;
     let mut completion_key : usize = CK_STOP;
     let mut overlapped : LPOVERLAPPED = null_mut();
     loop {
-        get_queued_completion_status(g_hiocp, &mut number_of_bytes, &mut completion_key, &mut overlapped).unwrap();
+        // Wait for the IOCP to be queued from RIO that we have results in our CQ
+        get_queued_completion_status(g_send_iocp, &mut number_of_bytes, &mut completion_key, &mut overlapped).unwrap();
 
         if completion_key == CK_STOP {
             break;
         }
 
-        let num_results = rio_dequeue_completion_vec(g_rio, g_completion_queue, &mut results_vec).unwrap();
-        if num_results == 0 {
-            yield_now();
+        // this signal is just for us to copy outstanding results - it does not mean that there are already real IO events to read
+        if completion_key == CK_COPIED {
+            queue_sends(g_rio, g_request_queue, mutex).unwrap();
+            // we have sent all send request wait for completion now
             continue;
         }
 
-        // Notify after Dequeueing
-        rio_notify(g_rio, g_completion_queue).unwrap();
-
-        for idx in 0..num_results {
-            let result : &RIORESULT = results_vec.get(idx as usize).unwrap();
-            let ext_buffer : &mut ExtendedRioBuf = get_context_buffer(result);
-            let status : i32 = result.Status;
-            let operation = ext_buffer.operation;
-            if status != 0 {
-                println!("Failed to receive/send request status {} on operation {}", status, operation_to_string(operation));
+        // do not call get_queued_completion_status until we have zero results - this ensures that we do not waste a syscall on high load
+        loop {
+            let num_results= do_dequeue(g_rio, g_completion_queue, &mut results_vec, mutex);
+            if num_results == 0 {
+                // break from inner loop
                 break;
             }
-            if OP_RECV == operation  {
-                let read_data : u32 = result.BytesTransferred;
-                let mut buffers_lock = mutex.lock();
-                let buffers = &mut *buffers_lock;
-                on_receive_op(g_rio, g_request_queue, buffers, ext_buffer, read_data).unwrap();
-            } else if OP_SEND == operation {
-                let mut buffers_lock = mutex.lock();
-                let buffers = &mut *buffers_lock;
-                on_send_op(g_rio, g_request_queue, buffers, ext_buffer).unwrap();
-            } else {
-                break;
+
+            let (finished_sends, completed_sends) = handle_send_result(&results_vec, num_results, mutex);
+            if finished_sends > 0 {
+                post_queued_completion_status(g_request_iocp, CK_SENT).unwrap();
             }
         }
     }
+}
+
+#[inline]
+fn do_dequeue(g_rio: RIO_EXTENSION_FUNCTION_TABLE, g_completion_queue: RIO_CQ, results_vec: &mut ArrayVec<[RIORESULT;RIO_MAX_RESULTS]>, mutex: &Mutex<RioBuffers>) -> u32 {
+    let num_results;
+    {
+        // Dequeue from the RIO socket under our locks - dequeue is not thread safe
+        let _buffers_lock = mutex.lock();
+        num_results = rio_dequeue_completion_vec(g_rio, g_completion_queue, results_vec).unwrap();
+        // Immediately after invoking Dequeue, post another Notify
+        rio_notify(g_rio, g_completion_queue).unwrap();
+    }
+    return num_results;
+}
+
+#[inline]
+fn queue_sends(g_rio: RIO_EXTENSION_FUNCTION_TABLE, g_request_queue: RIO_CQ, mutex: &Mutex<RioBuffers>) -> std::io::Result<u32> {
+    let mut send_count : u32 = 0;
+    {
+        let mut buffers_lock = mutex.lock();
+        let buffers = &mut *buffers_lock;
+        let send_buffers = &mut buffers.send_buffers;
+        for peer_send_buffers in send_buffers.iter_mut() {
+            let buffer_count = peer_send_buffers.buffer_idx;
+            // inclusive for loop
+            for idx in 0..=buffer_count {
+                let send_buffer = peer_send_buffers.buffers.get_mut(idx).unwrap();
+                // commit the last send operation
+                let send_result = rio_send_ex(g_rio, g_request_queue, send_buffer, false);
+                if send_result.is_err() {
+                    return send_result.map(|_|0);
+                }
+                send_count += 1;
+            }
+        }
+    }
+    if send_count > 0 {
+        // commit sends outside of the mutex because this operation is most probably the bottleneck
+        rio_commit_send(g_rio, g_request_queue).unwrap();
+    }
+    return Ok(send_count);
+}
+
+#[inline]
+fn handle_send_result(results_vec: &ArrayVec<[RIORESULT;RIO_MAX_RESULTS]>, num_results: u32, mutex: &Mutex<RioBuffers>) -> (u32, u32) {
+    let mut finished_sends : u32 = 0;
+    let mut completed_sends : u32 = 0;
+    for idx in 0..num_results {
+        let result: &RIORESULT = results_vec.get(idx as usize).unwrap();
+        let ext_buffer: &mut ExtendedRioBuf = get_context_buffer(result);
+        let status: i32 = result.Status;
+        let operation = ext_buffer.operation;
+        if status != 0 {
+            println!("Failed to receive/send request status {} on operation {}", status, operation_to_string(operation));
+            break;
+        }
+        if OP_SEND == operation {
+            let mut buffers_lock = mutex.lock();
+            let buffers = &mut *buffers_lock;
+            let sent_to_all = on_send_op(buffers, ext_buffer);
+            if sent_to_all {
+                let pks = buffers.pks;
+                pks.on_packet();
+                completed_sends += 1;
+            }
+            finished_sends += 1;
+        }
+    }
+    return (finished_sends, completed_sends);
+}
+
+#[inline]
+fn handle_receive_result(g_rio: RIO_EXTENSION_FUNCTION_TABLE, g_request_queue: RIO_CQ, results_vec: &ArrayVec<[RIORESULT;RIO_MAX_RESULTS]>, offset: u32, num_results: u32, mutex: &Mutex<RioBuffers>) -> u32 {
+    let mut copied_results : u32 = 0;
+    for idx in offset..num_results {
+        let result: &RIORESULT = results_vec.get(idx as usize).unwrap();
+        let ext_buffer: &mut ExtendedRioBuf = get_context_buffer(result);
+        let status: i32 = result.Status;
+        let operation = ext_buffer.operation;
+        if status != 0 {
+            println!("Failed to receive/send request status {} on operation {}", status, operation_to_string(operation));
+            break;
+        }
+        if OP_RECV == operation {
+            let read_data: u32 = result.BytesTransferred;
+            let mut buffers_lock = mutex.lock();
+            let buffers = &mut *buffers_lock;
+            let (_copied_entries, is_send_full) = on_receive_op(g_rio, g_request_queue, buffers, ext_buffer, read_data).unwrap();
+            if is_send_full {
+                break;
+            } else {
+                copied_results += 1;
+            }
+        } else {
+            // the operation is not for us - this should not happen but we still increment the result to be sure
+            copied_results += 1;
+        }
+    }
+    return copied_results;
 }
 
 // returns a mutable reference to the raw pointer of the RequestContext variable
@@ -465,44 +630,62 @@ fn operation_to_string<'a>(operation: u32) -> &'a str {
 }
 
 #[inline]
-fn on_receive_op(g_rio: RIO_EXTENSION_FUNCTION_TABLE, g_request_queue: RIO_CQ, buffers: &mut RioBuffers, buffer: &mut ExtendedRioBuf, read_data: u32) -> std::io::Result<()> {
+fn copy_to_send_buffers(buffers: &mut RioBuffers, buffer: &mut ExtendedRioBuf, read_data: u32) -> u32 {
     let address_buffers = &mut buffers.address_buffers;
     let send_buffers = &mut buffers.send_buffers;
-    for (idx, a_buffer) in address_buffers.buffers.iter_mut().enumerate() {
+    let mut copied_count : u32 = 0;
+    for (idx, send_addr_buffer) in address_buffers.buffers.iter_mut().enumerate() {
         // copy the read data into the send buffer of the destination
         let send_buffer = send_buffers.get_mut(idx).unwrap();
         let send_ptr = send_buffer.buffer_pointer();
         let receive_ptr = buffers.receive_buffers.buffer_pointer();
-        let send_rio_buffer = send_buffer.get_send_buffer();
-        // save the index of the receive buffer
-        send_rio_buffer.receive_index = buffer.index;
-        rio_copy(receive_ptr, send_ptr, buffer, send_rio_buffer, read_data);
-        rio_send_ex(g_rio, g_request_queue, send_rio_buffer, a_buffer).unwrap();
+        let send_rio_buffer_op = send_buffer.get_send_buffer();
+        if send_rio_buffer_op.is_some() {
+            let send_rio_buffer = send_rio_buffer_op.unwrap();
+            // save the target address buffer the address buffers are never changed
+            send_rio_buffer.remote_address = Option::Some(&mut send_addr_buffer.buf);
+            // save the index of the receive buffer
+            send_rio_buffer.receive_index = buffer.index;
+
+            // copy the received data into the send buffer
+            rio_copy(receive_ptr, send_ptr, buffer, send_rio_buffer, read_data);
+            copied_count += 1;
+        } else {
+            // we are out of send buffer
+            break;
+        }
     }
-    Ok(())
+    return copied_count;
 }
 
 #[inline]
-fn on_send_op(g_rio: RIO_EXTENSION_FUNCTION_TABLE, g_request_queue: RIO_CQ, buffers: &mut RioBuffers, send_buffer: &mut ExtendedRioBuf) -> std::io::Result<()> {
+fn on_receive_op(g_rio: RIO_EXTENSION_FUNCTION_TABLE, g_request_queue: RIO_CQ, buffers: &mut RioBuffers, receive_buffer: &mut ExtendedRioBuf, read_data: u32) -> std::io::Result<(u32, bool)> {
+    // copy data into send buffers
+    let copied_entries = copy_to_send_buffers(buffers, receive_buffer, read_data);
+    let is_full = copied_entries != buffers.send_peer_count as u32;
+    if !is_full {
+        let receive_result = rio_receive_ex(g_rio, g_request_queue, receive_buffer);
+        return receive_result.map(|_| (copied_entries,false));
+    }
+    Ok((copied_entries,true))
+}
+
+#[inline]
+fn on_send_op(buffers: &mut RioBuffers, send_buffer: &mut ExtendedRioBuf) -> bool {
     let receive_index = send_buffer.receive_index;
     buffers.finish_send(send_buffer);
 
     let receive_buffer = buffers.receive_buffers.buffers.get_mut(receive_index).unwrap();
     receive_buffer.send_count += 1;
-    let pks = buffers.pks;
     let send_peer_count = buffers.send_peer_count;
 
     // if the read data is successfully sent to all clients we queue a additional receive request
     if receive_buffer.send_count == send_peer_count {
         receive_buffer.send_count = 0;
-        let receive_result = rio_receive_ex(g_rio, g_request_queue, receive_buffer);
-        if receive_result.is_err() {
-            return receive_result;
-        }
-        pks.on_packet();
+        return true;
     }
 
-    Ok(())
+    return false;
 }
 
 #[inline]
@@ -549,7 +732,7 @@ fn rio_notify(g_rio: RIO_EXTENSION_FUNCTION_TABLE, g_completion_queue: RIO_CQ) -
     unsafe {
         let result = (g_rio.RIONotify.unwrap())(g_completion_queue);
         if result != ERROR_SUCCESS as i32 {
-            return Err(std::io::Error::last_os_error());
+            return Err(std::io::Error::from_raw_os_error(result));
         }
         return Ok(());
     }
@@ -570,12 +753,29 @@ fn rio_receive_ex(g_rio: RIO_EXTENSION_FUNCTION_TABLE, g_request_queue: RIO_CQ, 
 }
 
 #[inline]
-fn rio_send_ex(g_rio: RIO_EXTENSION_FUNCTION_TABLE, g_request_queue: RIO_CQ, buffer: &mut ExtendedRioBuf, remote_addr: &mut ExtendedRioBuf) -> std::io::Result<()> {
+fn rio_commit_send(g_rio: RIO_EXTENSION_FUNCTION_TABLE, g_request_queue: RIO_CQ) -> std::io::Result<()> {
+    unsafe {
+        let result = (g_rio.RIOSendEx.unwrap())(g_request_queue, null_mut(), 0, null_mut(), null_mut(), null_mut(), null_mut(), RIO_MSG_COMMIT_ONLY, null_mut());
+        if result == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        return Ok(());
+    }
+}
+
+#[inline]
+fn rio_send_ex(g_rio: RIO_EXTENSION_FUNCTION_TABLE, g_request_queue: RIO_CQ, buffer: &mut ExtendedRioBuf, commit: bool) -> std::io::Result<()> {
     unsafe {
         let buffer_ptr : PVOID = buffer as *mut _ as LPVOID;
         let rio_buffer_ptr : PRIO_BUF = &mut buffer.buf;
-        let remote_addr_ptr : PRIO_BUF =  &mut remote_addr.buf;
-        let result = (g_rio.RIOSendEx.unwrap())(g_request_queue, rio_buffer_ptr, 1, null_mut(), remote_addr_ptr, null_mut(), null_mut(), 0, buffer_ptr);
+        let remote_addr_ptr = buffer.remote_address.unwrap();
+        let flags;
+        if commit {
+            flags = 0;
+        } else {
+            flags = RIO_MSG_DEFER;
+        }
+        let result = (g_rio.RIOSendEx.unwrap())(g_request_queue, rio_buffer_ptr, 1, null_mut(), remote_addr_ptr, null_mut(), null_mut(), flags, buffer_ptr);
         if result == 0 {
             return Err(std::io::Error::last_os_error());
         }
@@ -594,6 +794,16 @@ fn rio_copy(src_chunk: LPVOID, dst_chunk: LPVOID, src: &mut ExtendedRioBuf, dst:
     }
 }
 
+fn post_queued_completion_status(completion_port: HANDLE, completion_key: ULONG_PTR) -> std::io::Result<()> {
+    unsafe {
+        let result = PostQueuedCompletionStatus(completion_port, 0, completion_key, null_mut());
+        if result == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        return Ok(());
+    }
+}
+
 struct ExtendedRioBuf {
     buf: RIO_BUF,
     operation: u32,
@@ -604,7 +814,9 @@ struct ExtendedRioBuf {
     // the index of the buffer in the receive chunk (only used for send buffers)
     receive_index: usize,
     // track the client index this buffer is associated with (only used for send buffers)
-    send_peer: usize
+    send_peer: usize,
+    // the buffer containing the remote address (only used for send buffers)
+    remote_address: Option<PRIO_BUF>,
 }
 
 unsafe impl Send for ExtendedRioBuf {}
@@ -627,7 +839,8 @@ impl ExtendedRioBuf {
             send_peer,
             index,
             send_count: 0,
-            receive_index: 0
+            receive_index: 0,
+            remote_address: Option::None
         }
     }
 }
@@ -673,9 +886,11 @@ impl RioChunkBuffers {
     }
 
     #[inline]
-    fn get_send_buffer(&mut self) -> &mut ExtendedRioBuf {
-        let send_buffer = self.buffers.get_mut(self.buffer_idx).unwrap();
-        self.buffer_idx += 1;
+    fn get_send_buffer(&mut self) -> Option<&mut ExtendedRioBuf> {
+        let send_buffer = self.buffers.get_mut(self.buffer_idx);
+        if send_buffer.is_some() {
+            self.buffer_idx += 1;
+        }
         return send_buffer;
     }
 
@@ -689,7 +904,10 @@ struct RioBuffers<'a> {
     address_buffers: &'a mut RioChunkBuffers,
     send_buffers: &'a mut Vec<RioChunkBuffers>,
     receive_buffers: &'a mut RioChunkBuffers,
+    // how may targets do we have
     send_peer_count: usize,
+    // how many packets have we sent so far since the last commit
+    send_commit_count: usize,
     pks: &'a&'a mut PacketsPerSecond
 }
 
@@ -700,6 +918,7 @@ impl<'a> RioBuffers<'a> {
             send_buffers,
             receive_buffers,
             send_peer_count,
+            send_commit_count: 0,
             pks
         }
     }

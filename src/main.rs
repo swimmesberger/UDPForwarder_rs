@@ -54,10 +54,8 @@ fn main() -> std::io::Result<()> {
         is_sending = true;
     }
 
-    if !is_sending && !is_async && !is_queue && !is_block {
-        if cfg!(windows) {
-            is_rio = true;
-        } else if peers.len() <= 1 {
+    if !is_sending && !is_async && !is_queue && !is_block && !is_rio {
+        if peers.len() <= 1 {
             is_block = true;
         } else {
             is_queue = true;
@@ -74,7 +72,7 @@ fn main() -> std::io::Result<()> {
         } else if is_block {
             send_threads_s = "2";
         } else if is_rio {
-            send_threads_s = "4";
+            send_threads_s = "1";
         }
     }
 
@@ -88,7 +86,7 @@ fn main() -> std::io::Result<()> {
         } else if is_block {
             receive_threads_s = "0";
         } else if is_rio {
-            receive_threads_s = "0";
+            receive_threads_s = "1";
         }
     }
 
