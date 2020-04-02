@@ -1,6 +1,6 @@
 [package]
 name = "udp_forwarder"
-version = "0.4.0"
+version = "0.5.0"
 authors = ["Simon Wimmesberger <wimmesberger@gmail.com>"]
 edition = "2018"
 
