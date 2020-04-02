@@ -17,10 +17,10 @@ fn main() -> std::io::Result<()> {
         .about("Forwards UDP data from one port to multiple others")
         .author("Simon Wimmesberger")
         .arg(Arg::with_name("input-address").short("i").help("The address the server should listen on").required(false).default_value("").takes_value(true))
-        .arg(Arg::with_name("output-address").short("o").help("The address the server should send data to").required(true).multiple(true).takes_value(true))
-        .arg(Arg::with_name("async").short("a").required(false).help("Should the server handle udp async or not"))
-        .arg(Arg::with_name("queue").short("q").required(false).help("Enables queueing in blocking mode"))
-        .arg(Arg::with_name("block").short("b").required(false).help("Enables blocking mode without queue"))
+        .arg(Arg::with_name("output-address").short("o").help("The address the server should send data to (allowed multiple times)").required(true).multiple(true).takes_value(true))
+        .arg(Arg::with_name("async").short("a").required(false).help("Switches to async mode"))
+        .arg(Arg::with_name("queue").short("q").required(false).help("Switches queueing in blocking mode"))
+        .arg(Arg::with_name("block").short("b").required(false).help("Switches blocking mode without queue"))
         .arg(Arg::with_name("sending").short("s").required(false).help("Switches to sending mode"))
         .arg(Arg::with_name("packet-size").short("p").required(false).takes_value(true).default_value("300").help("Set's the send packet size"))
         .arg(Arg::with_name("send-threads").short("t").required(false).takes_value(true).default_value("").help("The number of threads used for sending"))
@@ -28,7 +28,7 @@ fn main() -> std::io::Result<()> {
         .arg(Arg::with_name("recv-buffer").short("v").required(false).takes_value(true).default_value("0").help("The number of bytes for the socket receive buffer."))
         .arg(Arg::with_name("send-buffer").short("n").required(false).takes_value(true).default_value("0").help("The number of bytes for the socket receive buffer."));
     if cfg!(windows) {
-        args = args.arg(Arg::with_name("rio").short("z").required(false).help("Should the registered input-output of windows be used"));
+        args = args.arg(Arg::with_name("rio").short("z").required(false).help("Switches to registered input-output (EXPERIMENTAL)"));
     }
     let matches = args.get_matches();
 
