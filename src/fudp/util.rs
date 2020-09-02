@@ -1,5 +1,5 @@
 use std::mem;
-use std::net::{UdpSocket, SocketAddr};
+use std::net::{UdpSocket, SocketAddr, ToSocketAddrs};
 use net2::{UdpBuilder, UdpSocketExt};
 use num_format::{ToFormattedString, Locale};
 use std::io::{Write};
@@ -162,6 +162,16 @@ impl PacketsPerSecond {
 
 pub fn create_udp_socket_with_config(config: &SocketConfiguration) -> UdpSocket {
     return create_udp_socket_with_address(config.listen_address, config.parameters);
+}
+
+pub fn create_udp_socket_for_address(connect_address: &SocketAddr, config: SocketConfigurationParameter) -> UdpSocket {
+    let listen_address;
+    if connect_address.ip().to_string().eq("127.0.0.1") {
+        listen_address = "127.0.0.1:0";
+    } else {
+        listen_address = "0.0.0.0:0";
+    }
+    return create_udp_socket_with_address(listen_address, config);
 }
 
 pub fn create_udp_socket_with_address(listen_address: &str, config: SocketConfigurationParameter) -> UdpSocket {

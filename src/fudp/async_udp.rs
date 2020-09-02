@@ -31,10 +31,10 @@ pub async fn run(config: &ForwardingConfiguration) -> std::io::Result<()> {
     for (idx, peer) in peers.iter().enumerate() {
         for _x in 0..send_thread_count {
             let mut peer_rx = channel_tx.subscribe();
-            let peer_socket = UdpSocket::from_std(util::create_udp_socket_with_address("127.0.0.1:0", socket_params)).unwrap();
+            let peer_socket = UdpSocket::from_std(util::create_udp_socket_for_address(peer, socket_params)).unwrap();
             peer_socket.connect(peer).await?;
             let peer_socket_addr = peer_socket.local_addr().unwrap();
-            println!("Binding async send socket on {}", peer_socket_addr);
+            println!("Binding async send socket on {} for {}", peer_socket_addr, peer);
 
             let (_peer_sock_rx, mut peer_sock_tx)  = peer_socket.split();
             let child = tokio::spawn(async move {

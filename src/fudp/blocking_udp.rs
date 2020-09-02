@@ -18,9 +18,9 @@ pub fn run(config: &ForwardingConfiguration) -> std::io::Result<()> {
     for _idx in 0..thread_count {
         let mut thread_send_sockets : Vec<Arc<UdpSocket>> = Vec::with_capacity(peers.len());
         for peer in peers.iter() {
-            let peer_socket = util::create_udp_socket_with_address("127.0.0.1:0", socket_params);
+            let peer_socket = util::create_udp_socket_for_address(peer, socket_params);
             peer_socket.connect(peer).unwrap();
-            println!("Binding blocking send socket on {}", peer_socket.local_addr().unwrap());
+            println!("Binding blocking send socket on {} to {}", peer_socket.local_addr().unwrap(), peer);
             thread_send_sockets.push(Arc::new(peer_socket));
         }
         send_sockets.push(thread_send_sockets);

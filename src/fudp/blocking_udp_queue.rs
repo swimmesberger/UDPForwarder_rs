@@ -128,9 +128,9 @@ fn spawn_send_worker(idx: usize, dst:  SocketAddr, mut rx: Option<BusReader<Forw
 
 #[inline]
 fn send_worker(idx: usize, dst: SocketAddr, rx: &mut Option<BusReader<ForwardingPacket>>, rx_basic: &mut Option<BusReader<Bytes>>, config: SocketConfigurationParameter) {
-    let peer_socket = util::create_udp_socket_with_address("127.0.0.1:0", config);
+    let peer_socket = util::create_udp_socket_for_address(&dst, config);
     peer_socket.connect(dst).unwrap();
-    println!("Binding queued blocking send socket on {}", peer_socket.local_addr().unwrap());
+    println!("Binding queued blocking send socket on {} for {}", peer_socket.local_addr().unwrap(), dst);
 
     let has_packet_bus = rx.is_some();
     loop {
