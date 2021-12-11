@@ -1,5 +1,5 @@
 use std::mem;
-use std::net::{UdpSocket, SocketAddr, ToSocketAddrs};
+use std::net::{UdpSocket, SocketAddr};
 use net2::{UdpBuilder, UdpSocketExt};
 use num_format::{ToFormattedString, Locale};
 use std::io::{Write};

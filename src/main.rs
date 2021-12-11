@@ -38,10 +38,6 @@ fn main() -> std::io::Result<()> {
     let mut is_queue = matches.values_of("queue").is_some();
     let mut is_block = matches.values_of("block").is_some();
     let mut is_sending = matches.values_of("sending").is_some();
-    let mut is_rio = false;
-    if cfg!(windows) {
-        is_rio = matches.values_of("rio").is_some();
-    }
     let send_packet_size: usize = matches.value_of("packet-size").unwrap().parse().unwrap();
     let no_listen_address = listen_address.is_empty();
     let mut send_threads_s = matches.value_of("send-threads").unwrap();
@@ -54,7 +50,7 @@ fn main() -> std::io::Result<()> {
         is_sending = true;
     }
 
-    if !is_sending && !is_async && !is_queue && !is_block && !is_rio {
+    if !is_sending && !is_async && !is_queue && !is_block {
         if peers.len() <= 1 {
             is_block = true;
         } else {
@@ -71,8 +67,6 @@ fn main() -> std::io::Result<()> {
             send_threads_s = "2";
         } else if is_block {
             send_threads_s = "2";
-        } else if is_rio {
-            send_threads_s = "1";
         }
     }
 
@@ -85,8 +79,6 @@ fn main() -> std::io::Result<()> {
             receive_threads_s = "0";
         } else if is_block {
             receive_threads_s = "0";
-        } else if is_rio {
-            receive_threads_s = "1";
         }
     }
 
@@ -104,9 +96,7 @@ fn main() -> std::io::Result<()> {
     let result;
     if is_sending {
         result = fudp::sender::run(&config);
-    } else if is_rio {
-        result = fudp::windows_rio::run(&config);
-    } else if is_async {
+    }else if is_async {
         result = fudp::async_udp::run(&config);
     } else if is_queue {
         result = fudp::blocking_udp_queue::run(&config);
